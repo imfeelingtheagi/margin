@@ -1,0 +1,89 @@
+{
+  "name": "margin-markdown",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A calm, local-first Markdown reader and editor for the desktop.",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "npm run build && electron-builder",
+    "package:dir": "npm run build && electron-builder --dir"
+  },
+  "engines": {
+    "node": ">=22 <27"
+  },
+  "dependencies": {
+    "@codemirror/commands": "latest",
+    "@codemirror/lang-markdown": "latest",
+    "@codemirror/language-data": "latest",
+    "@codemirror/search": "latest",
+    "@codemirror/state": "latest",
+    "@codemirror/view": "latest",
+    "@uiw/react-codemirror": "latest",
+    "@vscode/markdown-it-katex": "latest",
+    "dompurify": "latest",
+    "highlight.js": "latest",
+    "katex": "latest",
+    "lucide-react": "latest",
+    "markdown-it": "latest",
+    "markdown-it-anchor": "latest",
+    "markdown-it-deflist": "latest",
+    "markdown-it-footnote": "latest",
+    "markdown-it-mark": "latest",
+    "markdown-it-sub": "latest",
+    "markdown-it-sup": "latest",
+    "markdown-it-task-lists": "latest",
+    "mermaid": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/katex": "latest",
+    "@types/markdown-it": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "cross-env": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "app.margin.markdown",
+    "productName": "Margin",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "category": "Office",
+      "target": ["AppImage", "deb"]
+    }
+  }
+}
