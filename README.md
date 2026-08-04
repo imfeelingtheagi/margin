@@ -4,7 +4,7 @@ Margin is a calm, local-first Markdown reader and editor for macOS, Windows, and
 
 ## What it includes
 
-- Native multi-file open, tabs, save, Save As, autosave, crash recovery, and external-change detection
+- Native Open With / file-association support, multi-file open, tabs, save, Save As, autosave, crash recovery, and external-change detection
 - Read and Edit modes with a responsive outline, focus mode, word/character counts, reading time, and cursor position
 - Markdown tables, task lists, footnotes, definition lists, strikethrough, mark, subscript, superscript, front matter, raw HTML (sanitized), KaTeX math, Mermaid diagrams, and syntax-highlighted code
 - CodeMirror editing with undo/redo, find/replace, line numbers, folding, Markdown-aware formatting tools, and keyboard shortcuts
@@ -35,6 +35,20 @@ npm run package:dir # create an unpacked app for the current platform
 
 Electron Builder produces artifacts in `release/`. Cross-platform installers should be built on their target operating systems (or in an appropriate CI matrix). Production releases still need the signing/notarization credentials for each target platform.
 
+### Run the packaged app on macOS
+
+```sh
+npm install
+npm run package:dir
+open release/mac-arm64/Margin.app   # Apple Silicon
+```
+
+On an Intel Mac, the generated directory is normally `release/mac/Margin.app`. Keep and distribute the complete `Margin.app` bundle; the executable inside it is not a standalone binary.
+
+To open a document, double-click it after associating Markdown files with Margin, drag it onto Margin, use **File → Open**, or choose **Open With → Margin** in Finder. To make Margin the default, select a `.md` file in Finder, choose **Get Info**, select Margin under **Open with**, then click **Change All…**.
+
+Windows file associations are installed by the per-machine NSIS installer and therefore request administrator approval. Linux associations are advertised through the AppImage/DEB desktop metadata; the desktop environment controls the final default-app choice.
+
 ## Keyboard shortcuts
 
 | Action | macOS | Windows / Linux |
@@ -45,7 +59,7 @@ Electron Builder produces artifacts in `release/`. Cross-platform installers sho
 | Save As | `⇧ ⌘ S` | `Ctrl Shift S` |
 | Read / Edit | `⌘ E` | `Ctrl E` |
 | Find | `⌘ F` | `Ctrl F` |
-| Replace | `⌘ H` | `Ctrl H` |
+| Replace | `⌥ ⌘ F` | `Ctrl H` |
 | Close tab | `⌘ W` | `Ctrl W` |
 | Focus mode | `⇧ ⌘ F` | `Ctrl Shift F` |
 

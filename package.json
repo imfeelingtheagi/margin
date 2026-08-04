@@ -74,6 +74,20 @@
     "directories": {
       "output": "release"
     },
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mkd"],
+        "name": "Markdown Document",
+        "role": "Editor",
+        "rank": "Default"
+      },
+      {
+        "ext": "txt",
+        "name": "Plain Text Document",
+        "role": "Editor",
+        "rank": "Alternate"
+      }
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": ["dmg", "zip"]
@@ -81,8 +95,12 @@
     "win": {
       "target": "nsis"
     },
+    "nsis": {
+      "perMachine": true
+    },
     "linux": {
       "category": "Office",
+      "mimeTypes": ["text/markdown", "text/x-markdown", "text/plain"],
       "target": ["AppImage", "deb"]
     }
   }

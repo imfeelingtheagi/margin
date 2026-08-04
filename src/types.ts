@@ -13,6 +13,23 @@ export interface OpenedDocument {
   bom: boolean
 }
 
+export interface DocumentOpenError {
+  path: string
+  message: string
+}
+
+export interface OpenDocumentsResult {
+  documents: OpenedDocument[]
+  errors: DocumentOpenError[]
+  deliveryId?: number
+}
+
+export interface DocumentStat {
+  exists: boolean
+  mtimeMs: number | null
+  writable: boolean
+}
+
 export interface DocumentTab {
   id: string
   path: string | null
@@ -72,10 +89,11 @@ export interface ExportResult {
 }
 
 export interface MarginApi {
-  openDocuments: () => Promise<OpenedDocument[]>
+  openDocuments: () => Promise<OpenDocumentsResult>
   saveDocument: (request: SaveRequest) => Promise<SaveResult>
   readDocument: (filePath: string) => Promise<OpenedDocument>
-  statDocument: (filePath: string) => Promise<{ mtimeMs: number; writable: boolean } | null>
+  openLinkedDocument: (documentPath: string, href: string) => Promise<OpenDocumentsResult>
+  statDocument: (filePath: string) => Promise<DocumentStat | null>
   readAsset: (documentPath: string, assetPath: string) => Promise<string | null>
   exportHtml: (request: { html: string; suggestedName: string }) => Promise<ExportResult>
   exportPdf: (request: { html: string; suggestedName: string }) => Promise<ExportResult>
@@ -85,10 +103,14 @@ export interface MarginApi {
   clearSession: () => Promise<void>
   setDirty: (isDirty: boolean) => void
   closeWindow: () => void
+  cancelWindowClose: () => void
   showItemInFolder: (filePath: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   startFind: (text: string, options?: { forward?: boolean; findNext?: boolean }) => Promise<number | null>
   stopFind: (action?: 'clearSelection' | 'keepSelection' | 'activateSelection') => void
+  onOpenDocuments: (callback: (result: OpenDocumentsResult) => void) => () => void
+  readyForOpenDocuments: () => void
+  readyForSafeClose: () => void
   onCommand: (callback: (command: string, payload?: string) => void) => () => void
 }
 

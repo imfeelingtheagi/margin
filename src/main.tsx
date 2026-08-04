@@ -6,11 +6,18 @@ import 'katex/dist/katex.min.css'
 import 'highlight.js/styles/github.css'
 import './styles.css'
 
-installBrowserPreviewApi()
+if (import.meta.env.DEV) installBrowserPreviewApi()
 document.documentElement.dataset.platform = /Mac/i.test(navigator.platform) ? 'darwin' : 'other'
 
-createRoot(document.getElementById('root')!).render(
+const root = createRoot(document.getElementById('root')!)
+
+root.render(window.margin ? (
   <StrictMode>
     <App />
-  </StrictMode>,
-)
+  </StrictMode>
+) : (
+  <main className="integration-error" role="alert">
+    <h1>Margin could not start safely.</h1>
+    <p>The secure desktop bridge did not load. Quit Margin and reopen it; if the problem continues, reinstall the app.</p>
+  </main>
+))

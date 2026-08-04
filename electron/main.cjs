@@ -1,6 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron')
 const fs = require('node:fs/promises')
 const path = require('node:path')
+const {
+  createExternalOpenCoordinator,
+  extractExternalFilePaths,
+  normalizeExternalFilePaths,
+  readDocumentsSettled,
+  resolveLinkedDocumentPath,
+} = require('./external-open.cjs')
 
 const isMac = process.platform === 'darwin'
 const devUrl = !app.isPackaged && process.env.VITE_DEV_SERVER_URL === 'http://127.0.0.1:5173'
@@ -9,10 +16,42 @@ const devUrl = !app.isPackaged && process.env.VITE_DEV_SERVER_URL === 'http://12
 const allowedDocuments = new Set()
 const dirtyWindows = new WeakMap()
 const forceClosing = new WeakSet()
+const rendererReadyWindows = new WeakSet()
+const closeSafetyReadyWindows = new WeakSet()
 const documentSaveQueues = new Map()
 const internalWriteTimes = new Map()
+const pendingExternalDeliveries = new Map()
 let recoveryQueue = Promise.resolve()
 let mainWindow = null
+let bootstrapReady = false
+let quitRequested = false
+let nextExternalDeliveryId = 0
+
+const externalOpenCoordinator = createExternalOpenCoordinator({
+  readDocument,
+  deliver: (target, result) => {
+    if (target.isDestroyed()) throw new Error('The document window is no longer available.')
+    return new Promise((resolve, reject) => {
+      const deliveryId = ++nextExternalDeliveryId
+      pendingExternalDeliveries.set(deliveryId, { target, resolve, reject })
+      try {
+        target.send('external-open:documents', { ...result, deliveryId })
+      } catch (error) {
+        pendingExternalDeliveries.delete(deliveryId)
+        reject(error)
+      }
+    })
+  },
+  requestAttention: focusMainWindow,
+})
+
+function rejectExternalDeliveries(target) {
+  for (const [deliveryId, delivery] of pendingExternalDeliveries) {
+    if (delivery.target !== target) continue
+    pendingExternalDeliveries.delete(deliveryId)
+    delivery.reject(new Error('The document window reloaded before the file-open request was applied.'))
+  }
+}
 
 function sendCommand(command, payload) {
   const target = BrowserWindow.getFocusedWindow() || mainWindow
@@ -67,7 +106,7 @@ function buildMenu() {
         { role: 'selectAll' },
         { type: 'separator' },
         { label: 'Find', accelerator: 'CmdOrCtrl+F', click: () => sendCommand('find') },
-        { label: 'Find and Replace', accelerator: 'CmdOrCtrl+H', click: () => sendCommand('replace') },
+        { label: 'Find and Replace', accelerator: isMac ? 'Cmd+Alt+F' : 'Ctrl+H', click: () => sendCommand('replace') },
       ],
     },
     {
@@ -91,9 +130,7 @@ function buildMenu() {
         { label: 'Toggle Outline', accelerator: 'CmdOrCtrl+Shift+O', click: () => sendCommand('toggleOutline') },
         { label: 'Focus Mode', accelerator: 'CmdOrCtrl+Shift+F', click: () => sendCommand('focusMode') },
         { type: 'separator' },
-        { role: 'reload' },
-        { role: 'toggleDevTools', visible: Boolean(devUrl) },
-        { type: 'separator' },
+        ...(devUrl ? [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }] : []),
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },
@@ -130,14 +167,37 @@ function assertMarkdownText(buffer, filePath) {
   }
 }
 
+async function readFileSnapshot(filePath) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const handle = await fs.open(filePath, 'r')
+    try {
+      const before = await handle.stat()
+      if (!before.isFile()) throw new Error(`${path.basename(filePath)} is not a regular file.`)
+      const buffer = await handle.readFile()
+      const after = await handle.stat()
+      const stable = before.size === after.size
+        && before.mtimeMs === after.mtimeMs
+        && before.ctimeMs === after.ctimeMs
+      if (stable && buffer.length === after.size) return { buffer, stat: after }
+    } finally {
+      await handle.close()
+    }
+  }
+  throw new Error(`${path.basename(filePath)} changed while it was being opened. Try again.`)
+}
+
 async function readDocument(filePath) {
   const canonicalPath = await canonicalize(filePath)
-  const buffer = await fs.readFile(canonicalPath)
+  const { buffer, stat } = await readFileSnapshot(canonicalPath)
   assertMarkdownText(buffer, canonicalPath)
-  const stat = await fs.stat(canonicalPath)
   allowedDocuments.add(canonicalPath)
   const hasBom = buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf
-  const decoded = buffer.toString('utf8').replace(/^\uFEFF/, '')
+  let decoded
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^\uFEFF/, '')
+  } catch {
+    throw new Error(`${path.basename(canonicalPath)} is not valid UTF-8 text.`)
+  }
   return {
     path: canonicalPath,
     name: path.basename(canonicalPath),
@@ -192,16 +252,19 @@ async function saveRecoverySession(tabs) {
       const candidate = await canonicalize(tab.path)
       if (allowedDocuments.has(candidate)) documentPath = candidate
     }
-    const dirty = tab.content !== tab.savedContent
+    const dirty = tab.content !== tab.savedContent || tab.saveState === 'conflict'
     const recoveryContent = documentPath && !dirty ? '' : tab.content
-    totalLength += recoveryContent.length
+    const recoveryBaseline = dirty && typeof tab.savedContent === 'string' ? tab.savedContent : ''
+    totalLength += recoveryContent.length + recoveryBaseline.length
     if (totalLength > 50 * 1024 * 1024) throw new Error('The recovery session is larger than 50 MB.')
     safeTabs.push({
       id: tab.id,
       path: documentPath,
       name: typeof tab.name === 'string' ? tab.name : 'Untitled.md',
       content: recoveryContent,
+      savedContent: recoveryBaseline,
       dirty,
+      mtimeMs: Number.isFinite(tab.mtimeMs) ? tab.mtimeMs : null,
       mode: tab.mode === 'edit' ? 'edit' : 'read',
       lineEnding: tab.lineEnding === 'crlf' ? 'crlf' : 'lf',
       bom: Boolean(tab.bom),
@@ -213,14 +276,20 @@ async function saveRecoverySession(tabs) {
 }
 
 async function loadRecoverySession() {
-  const raw = await fs.readFile(sessionFilePath(), 'utf8').catch(() => '[]')
+  let raw
+  try {
+    raw = await fs.readFile(sessionFilePath(), 'utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    throw new Error('The recovery backup could not be read. Margin will not overwrite it.')
+  }
   let stored
   try {
     stored = JSON.parse(raw)
   } catch {
-    return []
+    await quarantineRecoverySession('damaged')
   }
-  if (!Array.isArray(stored)) return []
+  if (!Array.isArray(stored)) await quarantineRecoverySession('in an unsupported format')
   const restored = []
   for (const item of stored.slice(0, 20)) {
     if (!item || typeof item.id !== 'string' || typeof item.content !== 'string') continue
@@ -228,17 +297,24 @@ async function loadRecoverySession() {
       try {
         const disk = await readDocument(item.path)
         const content = item.dirty ? item.content : disk.content
+        const baselineMtime = Number.isFinite(item.mtimeMs) ? item.mtimeMs : null
+        const diskChangedWhileClosed = Boolean(item.dirty) && (
+          baselineMtime == null || Math.abs(disk.mtimeMs - baselineMtime) > 2
+        )
+        const savedContent = diskChangedWhileClosed && typeof item.savedContent === 'string'
+          ? item.savedContent
+          : disk.content
         restored.push({
           id: item.id,
           path: disk.path,
           name: disk.name,
           content,
-          savedContent: disk.content,
-          mtimeMs: disk.mtimeMs,
-          lineEnding: disk.lineEnding,
-          bom: disk.bom,
+          savedContent,
+          mtimeMs: diskChangedWhileClosed ? (baselineMtime ?? 0) : disk.mtimeMs,
+          lineEnding: diskChangedWhileClosed ? (item.lineEnding === 'crlf' ? 'crlf' : 'lf') : disk.lineEnding,
+          bom: diskChangedWhileClosed ? Boolean(item.bom) : disk.bom,
           mode: item.mode === 'edit' ? 'edit' : 'read',
-          saveState: content === disk.content ? 'saved' : 'edited',
+          saveState: diskChangedWhileClosed ? 'conflict' : content === disk.content ? 'saved' : 'edited',
           cursorLine: item.cursorLine || 1,
           cursorColumn: item.cursorColumn || 1,
         })
@@ -265,6 +341,16 @@ async function loadRecoverySession() {
   return restored
 }
 
+async function quarantineRecoverySession(reason) {
+  const preservedPath = `${sessionFilePath()}.invalid-${Date.now()}`
+  try {
+    await fs.rename(sessionFilePath(), preservedPath)
+  } catch {
+    throw new Error(`The recovery backup is ${reason} and could not be preserved safely. Margin will not overwrite it.`)
+  }
+  throw new Error(`The recovery backup was ${reason} and was preserved as ${path.basename(preservedPath)}.`)
+}
+
 async function chooseSavePath(parent, currentPath, suggestedName, extension = 'md') {
   const isHtml = extension === 'html'
   const isPdf = extension === 'pdf'
@@ -288,8 +374,8 @@ async function registerIpc() {
         { name: 'All files', extensions: ['*'] },
       ],
     })
-    if (result.canceled) return []
-    return Promise.all(result.filePaths.map(readDocument))
+    if (result.canceled) return { documents: [], errors: [] }
+    return readDocumentsSettled(result.filePaths, readDocument)
   })
 
   ipcMain.handle('documents:save', async (event, request) => {
@@ -308,16 +394,21 @@ async function registerIpc() {
       if (!request.saveAs && request.expectedMtime != null) {
         const currentStat = await fs.stat(targetPath).catch(() => null)
         const lastInternalWrite = internalWriteTimes.get(targetPath)
+        const fileIsMissing = !currentStat
         const changedSinceExpected = currentStat && Math.abs(currentStat.mtimeMs - request.expectedMtime) > 2
         const isOurPreviousWrite = currentStat && lastInternalWrite != null && Math.abs(currentStat.mtimeMs - lastInternalWrite) <= 2
-        if (changedSinceExpected && !isOurPreviousWrite) {
-          if (request.silent) return { status: 'conflict', mtimeMs: currentStat.mtimeMs }
+        if (fileIsMissing || (changedSinceExpected && !isOurPreviousWrite)) {
+          if (request.silent) return { status: 'conflict', mtimeMs: currentStat?.mtimeMs ?? 0 }
           const choice = await dialog.showMessageBox(parent, {
             type: 'warning',
-            title: 'This file changed on disk',
-            message: `${path.basename(targetPath)} was changed by another application.`,
-            detail: 'Overwriting will replace those external changes.',
-            buttons: ['Overwrite', 'Save a Copy…', 'Cancel'],
+            title: fileIsMissing ? 'This file is no longer on disk' : 'This file changed on disk',
+            message: fileIsMissing
+              ? `${path.basename(targetPath)} was moved or deleted by another application.`
+              : `${path.basename(targetPath)} was changed by another application.`,
+            detail: fileIsMissing
+              ? 'Saving again will recreate it at the original location.'
+              : 'Overwriting will replace those external changes.',
+            buttons: [fileIsMissing ? 'Save Again' : 'Overwrite', 'Save a Copy…', 'Cancel'],
             defaultId: 2,
             cancelId: 2,
           })
@@ -352,11 +443,35 @@ async function registerIpc() {
     return readDocument(canonicalPath)
   })
 
+  ipcMain.handle('documents:open-link', async (_event, documentPath, href) => {
+    try {
+      const canonicalDocument = await canonicalize(documentPath)
+      if (!allowedDocuments.has(canonicalDocument)) throw new Error('The source document is not registered as open.')
+      const capabilityRoot = await canonicalize(path.dirname(canonicalDocument))
+      const resolved = resolveLinkedDocumentPath(canonicalDocument, href)
+      const canonicalTarget = await canonicalize(resolved)
+      if (canonicalTarget !== capabilityRoot && !canonicalTarget.startsWith(`${capabilityRoot}${path.sep}`)) {
+        throw new Error('Links outside this document folder are blocked.')
+      }
+      return readDocumentsSettled([canonicalTarget], readDocument)
+    } catch (error) {
+      return {
+        documents: [],
+        errors: [{
+          path: typeof href === 'string' ? href : '',
+          message: error instanceof Error ? error.message : 'The linked document could not be opened.',
+        }],
+      }
+    }
+  })
+
   ipcMain.handle('documents:stat', async (_event, filePath) => {
     const canonicalPath = await canonicalize(filePath)
     if (!allowedDocuments.has(canonicalPath)) return null
     const stat = await fs.stat(canonicalPath).catch(() => null)
-    return stat ? { mtimeMs: stat.mtimeMs, writable: true } : null
+    return stat
+      ? { exists: true, mtimeMs: stat.mtimeMs, writable: true }
+      : { exists: false, mtimeMs: null, writable: false }
   })
 
   ipcMain.handle('assets:read', async (_event, documentPath, assetPath) => {
@@ -442,8 +557,19 @@ async function registerIpc() {
   ipcMain.on('app:close-window', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return
+    const shouldQuit = quitRequested
     forceClosing.add(window)
+    if (shouldQuit) window.once('closed', () => setImmediate(() => app.quit()))
     window.close()
+  })
+
+  ipcMain.on('app:cancel-close', () => {
+    quitRequested = false
+  })
+
+  ipcMain.on('app:close-safety-ready', (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (window) closeSafetyReadyWindows.add(window)
   })
 
   ipcMain.handle('shell:show-item', (_event, filePath) => {
@@ -451,7 +577,7 @@ async function registerIpc() {
   })
 
   ipcMain.handle('shell:open-external', (_event, url) => {
-    if (/^https?:\/\//i.test(url)) return shell.openExternal(url)
+    if (typeof url === 'string' && url.length <= 2048 && /^(?:https?:\/\/|mailto:)/i.test(url)) return shell.openExternal(url)
     return false
   })
 
@@ -461,6 +587,28 @@ async function registerIpc() {
   })
 
   ipcMain.on('find:stop', (event, action = 'clearSelection') => event.sender.stopFindInPage(action))
+
+  ipcMain.on('external-open:ready', (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (window) rendererReadyWindows.add(window)
+    externalOpenCoordinator.setRendererReady(event.sender)
+  })
+
+  ipcMain.on('external-open:ack', (event, deliveryId) => {
+    if (!Number.isSafeInteger(deliveryId)) return
+    const delivery = pendingExternalDeliveries.get(deliveryId)
+    if (!delivery || delivery.target !== event.sender) return
+    pendingExternalDeliveries.delete(deliveryId)
+    delivery.resolve()
+  })
+}
+
+function focusMainWindow() {
+  if (!bootstrapReady) return
+  if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
 }
 
 function createWindow() {
@@ -479,22 +627,40 @@ function createWindow() {
       sandbox: true,
     },
   })
+  const contents = window.webContents
 
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url)
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^(?:https?:\/\/|mailto:)/i.test(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
-  window.webContents.on('will-navigate', (event, url) => {
-    const current = window.webContents.getURL()
+  contents.on('will-navigate', (event, url) => {
+    const current = contents.getURL()
     if (url !== current) event.preventDefault()
   })
+  contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+  contents.on('did-start-loading', () => {
+    rendererReadyWindows.delete(window)
+    closeSafetyReadyWindows.delete(window)
+    rejectExternalDeliveries(contents)
+    externalOpenCoordinator.setRendererUnavailable(contents)
+  })
+  contents.on('render-process-gone', () => {
+    rendererReadyWindows.delete(window)
+    closeSafetyReadyWindows.delete(window)
+    rejectExternalDeliveries(contents)
+    externalOpenCoordinator.setRendererUnavailable(contents)
+  })
   window.on('close', (event) => {
-    if (dirtyWindows.get(window) && !forceClosing.has(window)) {
+    if (closeSafetyReadyWindows.has(window) && !forceClosing.has(window)) {
       event.preventDefault()
-      window.webContents.send('app-command', 'requestWindowClose')
+      contents.send('app-command', 'requestWindowClose')
     }
   })
   window.on('closed', () => {
+    rendererReadyWindows.delete(window)
+    closeSafetyReadyWindows.delete(window)
+    rejectExternalDeliveries(contents)
+    externalOpenCoordinator.setRendererUnavailable(contents)
     if (mainWindow === window) mainWindow = null
   })
 
@@ -503,14 +669,44 @@ function createWindow() {
   return window
 }
 
-app.whenReady().then(async () => {
-  app.setName('Margin')
-  await registerIpc()
-  buildMenu()
-  mainWindow = createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
+const initialOpenPaths = extractExternalFilePaths(process.argv, {
+  isPackaged: app.isPackaged,
+  cwd: process.cwd(),
+})
+const hasSingleInstanceLock = app.requestSingleInstanceLock({ openPaths: initialOpenPaths })
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault()
+    externalOpenCoordinator.enqueue([filePath])
   })
+
+  app.on('second-instance', (_event, argv, workingDirectory, additionalData) => {
+    const transmittedPaths = normalizeExternalFilePaths(additionalData?.openPaths, workingDirectory)
+    const fallbackPaths = extractExternalFilePaths(argv, {
+      isPackaged: app.isPackaged,
+      cwd: workingDirectory,
+    })
+    externalOpenCoordinator.enqueue(transmittedPaths.length ? transmittedPaths : fallbackPaths)
+    focusMainWindow()
+  })
+
+  externalOpenCoordinator.enqueue(initialOpenPaths)
+
+  app.whenReady().then(async () => {
+    app.setName('Margin')
+    await registerIpc()
+    buildMenu()
+    mainWindow = createWindow()
+    bootstrapReady = true
+    app.on('activate', focusMainWindow)
+  })
+}
+
+app.on('before-quit', () => {
+  quitRequested = true
 })
 
 app.on('window-all-closed', () => {

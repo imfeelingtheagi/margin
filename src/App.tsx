@@ -11,11 +11,11 @@ import { MarkdownPreview } from './components/MarkdownPreview'
 import { Outline } from './components/Outline'
 import { Toolbar, type FormatAction } from './components/Toolbar'
 import {
-  countWords, createDocument, extractOutline, fileStem, fromOpenedDocument,
-  loadSettings, readingMinutes,
+  countWords, createDocument, extractOutline, fileStem, hasUnresolvedChanges, loadSettings,
+  mergeOpenedDocuments, readingMinutes, reconcileExternalReload,
 } from './lib/document'
 import { createExportHtml } from './lib/markdown'
-import type { AppSettings, DocumentMode, DocumentTab, OutlineItem } from './types'
+import type { AppSettings, DocumentMode, DocumentTab, OpenDocumentsResult, OutlineItem } from './types'
 
 type DialogName = 'about' | 'shortcuts' | null
 type Toast = { id: number; message: string; tone: 'neutral' | 'success' | 'error' }
@@ -34,20 +34,23 @@ export default function App() {
   const [focusMode, setFocusMode] = useState(false)
   const [readerFindOpen, setReaderFindOpen] = useState(false)
   const [readerFind, setReaderFind] = useState('')
+  const [readerFindStatus, setReaderFindStatus] = useState({ current: 0, total: 0 })
+  const [readerFindNavigation, setReaderFindNavigation] = useState<{ sequence: number; direction: 1 | -1 }>({ sequence: 0, direction: 1 })
+  const [saveScheduleEpoch, setSaveScheduleEpoch] = useState(0)
   const [dialog, setDialog] = useState<DialogName>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const tabsRef = useRef(tabs)
   const closingRef = useRef(false)
+  const closingTabsRef = useRef(new Set<string>())
   const editorViews = useRef(new Map<string, EditorView>())
   const pendingEditorFind = useRef(new Set<string>())
   const pendingEditorFormat = useRef(new Map<string, FormatAction | string>())
   const documentSaveQueues = useRef(new Map<string, Promise<boolean>>())
   const toastId = useRef(0)
   const recoveryWarningShown = useRef(false)
+  const recoveryWritableRef = useRef(true)
   const observedExternalChanges = useRef(new Map<string, number>())
-  tabsRef.current = tabs
-
   const activeTab = tabs.find((tab) => tab.id === activeId) ?? null
   const activeMode = activeTab?.mode ?? 'read'
   const outline = useMemo(() => activeTab ? extractOutline(activeTab.content) : [], [activeTab?.content])
@@ -61,54 +64,65 @@ export default function App() {
   }, [])
 
   const updateTab = useCallback((id: string, patch: Partial<DocumentTab> | ((tab: DocumentTab) => Partial<DocumentTab>)) => {
-    setTabs((current) => current.map((tab) => tab.id === id
+    const next = tabsRef.current.map((tab) => tab.id === id
       ? { ...tab, ...(typeof patch === 'function' ? patch(tab) : patch) }
-      : tab))
+      : tab)
+    tabsRef.current = next
+    setTabs(next)
   }, [])
 
   const newDocument = useCallback(() => {
     const tab = createDocument()
-    setTabs((current) => [...current, tab])
+    const next = [...tabsRef.current, tab]
+    tabsRef.current = next
+    setTabs(next)
     setActiveId(tab.id)
     setFocusMode(false)
   }, [])
 
+  const applyOpenedDocuments = useCallback((result: OpenDocumentsResult) => {
+    let openedId: string | null = null
+    if (result.documents.length) {
+      const merged = mergeOpenedDocuments(tabsRef.current, result.documents)
+      tabsRef.current = merged.tabs
+      setTabs(merged.tabs)
+      setActiveId(merged.activeId)
+      openedId = merged.activeId
+      setFocusMode(false)
+      merged.conflicts.forEach((name) => showToast(`${name} also changed on disk. Your edits were preserved.`, 'error'))
+    }
+    result.errors.forEach((error) => showToast(error.message, 'error'))
+    return openedId
+  }, [showToast])
+
   const openDocuments = useCallback(async () => {
     try {
-      const opened = await window.margin.openDocuments()
-      if (!opened.length) return
-      const current = tabsRef.current
-      const next = [...current]
-      let targetId: string | null = null
-      for (const document of opened) {
-        const existingIndex = next.findIndex((tab) => tab.path === document.path)
-        const existing = next[existingIndex]
-        if (existing) {
-          if (existing.content === existing.savedContent) {
-            next[existingIndex] = {
-              ...existing,
-              ...document,
-              savedContent: document.content,
-              saveState: 'saved',
-            }
-          } else if (existing.mtimeMs !== document.mtimeMs) {
-            next[existingIndex] = { ...existing, saveState: 'conflict' }
-            showToast(`${existing.name} also changed on disk.`, 'error')
-          }
-          targetId = existing.id
-          continue
-        }
-        const tab = fromOpenedDocument(document)
-        next.push(tab)
-        targetId = tab.id
-      }
-      setTabs(next)
-      setActiveId(targetId)
-      setFocusMode(false)
+      applyOpenedDocuments(await window.margin.openDocuments())
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'The file could not be opened.', 'error')
     }
-  }, [showToast])
+  }, [applyOpenedDocuments, showToast])
+
+  const openLinkedDocument = useCallback(async (documentPath: string | null, href: string) => {
+    if (!documentPath) {
+      showToast('Save this draft before opening a relative document link.', 'error')
+      return
+    }
+    try {
+      const openedId = applyOpenedDocuments(await window.margin.openLinkedDocument(documentPath, href))
+      const rawFragment = href.includes('#') ? href.slice(href.indexOf('#') + 1) : ''
+      if (!openedId || !rawFragment) return
+      let fragment = rawFragment
+      try { fragment = decodeURIComponent(rawFragment) } catch { /* use the literal fragment */ }
+      updateTab(openedId, { mode: 'read' })
+      window.setTimeout(() => {
+        const preview = document.querySelector<HTMLElement>(`[data-preview-id="${CSS.escape(openedId)}"]`)
+        preview?.querySelector<HTMLElement>(`#${CSS.escape(fragment)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'The linked document could not be opened.', 'error')
+    }
+  }, [applyOpenedDocuments, showToast, updateTab])
 
   const performSave = useCallback(async (id: string, options: { saveAs?: boolean; silent?: boolean } = {}) => {
     const snapshot = tabsRef.current.find((tab) => tab.id === id)
@@ -126,7 +140,11 @@ export default function App() {
         silent: options.silent,
       })
       if (result.status === 'cancelled') {
-        updateTab(id, (tab) => ({ saveState: tab.content === tab.savedContent ? 'saved' : 'edited' }))
+        updateTab(id, (tab) => ({
+          saveState: snapshot.saveState === 'conflict'
+            ? 'conflict'
+            : tab.content === tab.savedContent ? 'saved' : 'edited',
+        }))
         return false
       }
       if (result.status === 'conflict') {
@@ -144,7 +162,7 @@ export default function App() {
       if (!options.silent) showToast(`Saved ${result.name}`, 'success')
       return true
     } catch (error) {
-      updateTab(id, { saveState: 'error' })
+      updateTab(id, { saveState: snapshot.saveState === 'conflict' ? 'conflict' : 'error' })
       showToast(error instanceof Error ? error.message : 'The document could not be saved.', 'error')
       return false
     }
@@ -161,16 +179,28 @@ export default function App() {
   }, [performSave])
 
   const closeTab = useCallback(async (id: string) => {
+    if (closingTabsRef.current.has(id)) return false
+    closingTabsRef.current.add(id)
+    await documentSaveQueues.current.get(id)?.catch(() => false)
     const tab = tabsRef.current.find((candidate) => candidate.id === id)
     if (!tab) return true
-    if (tab.content !== tab.savedContent) {
+    if (hasUnresolvedChanges(tab)) {
       const choice = await window.margin.confirmClose(tab.name)
-      if (choice === 'cancel') return false
-      if (choice === 'save' && !(await saveDocument(id))) return false
+      if (choice === 'cancel') {
+        closingTabsRef.current.delete(id)
+        setSaveScheduleEpoch((value) => value + 1)
+        return false
+      }
+      if (choice === 'save' && !(await saveDocument(id))) {
+        closingTabsRef.current.delete(id)
+        setSaveScheduleEpoch((value) => value + 1)
+        return false
+      }
     }
     const current = tabsRef.current
     const index = current.findIndex((candidate) => candidate.id === id)
     const next = current.filter((candidate) => candidate.id !== id)
+    tabsRef.current = next
     setTabs(next)
     editorViews.current.delete(id)
     if (activeId === id) setActiveId(next[Math.min(index, next.length - 1)]?.id ?? null)
@@ -178,14 +208,27 @@ export default function App() {
   }, [activeId, saveDocument])
 
   const closeWindow = useCallback(async () => {
-    for (const tab of [...tabsRef.current]) {
-      if (tab.content === tab.savedContent) continue
-      const choice = await window.margin.confirmClose(tab.name)
-      if (choice === 'cancel') return
-      if (choice === 'save' && !(await saveDocument(tab.id))) return
-    }
+    if (closingRef.current) return
     closingRef.current = true
-    await window.margin.clearSession()
+    for (const tab of [...tabsRef.current]) {
+      await documentSaveQueues.current.get(tab.id)?.catch(() => false)
+      const latest = tabsRef.current.find((candidate) => candidate.id === tab.id)
+      if (!latest || !hasUnresolvedChanges(latest)) continue
+      const choice = await window.margin.confirmClose(latest.name)
+      if (choice === 'cancel') {
+        closingRef.current = false
+        window.margin.cancelWindowClose()
+        setSaveScheduleEpoch((value) => value + 1)
+        return
+      }
+      if (choice === 'save' && !(await saveDocument(latest.id))) {
+        closingRef.current = false
+        window.margin.cancelWindowClose()
+        setSaveScheduleEpoch((value) => value + 1)
+        return
+      }
+    }
+    if (recoveryWritableRef.current) await window.margin.clearSession()
     window.margin.closeWindow()
   }, [saveDocument])
 
@@ -193,13 +236,17 @@ export default function App() {
     const id = activeId
     if (!id) return
     updateTab(id, { mode })
+    if (mode === 'edit') {
+      setReaderFindOpen(false)
+      setReaderFind('')
+    }
     if (mode === 'edit') window.setTimeout(() => editorViews.current.get(id)?.focus(), 20)
   }, [activeId, updateTab])
 
   const handleContentChange = useCallback((id: string, content: string) => {
     updateTab(id, (tab) => ({
       content,
-      saveState: content === tab.savedContent ? 'saved' : tab.saveState === 'conflict' ? 'conflict' : 'edited',
+      saveState: tab.saveState === 'conflict' ? 'conflict' : content === tab.savedContent ? 'saved' : 'edited',
     }))
   }, [updateTab])
 
@@ -240,7 +287,11 @@ export default function App() {
   const openFind = useCallback((replace = false) => {
     if (!activeTab) return
     if (activeTab.mode === 'edit' || replace) {
-      if (replace) updateTab(activeTab.id, { mode: 'edit' })
+      if (replace) {
+        setReaderFindOpen(false)
+        setReaderFind('')
+        updateTab(activeTab.id, { mode: 'edit' })
+      }
       window.setTimeout(() => {
         const view = editorViews.current.get(activeTab.id)
         if (view) openSearchPanel(view)
@@ -284,28 +335,74 @@ export default function App() {
     setSettings((current) => ({ ...current, ...patch }))
   }, [])
 
+  const updateReaderFindStatus = useCallback((current: number, total: number) => {
+    setReaderFindStatus((previous) => previous.current === current && previous.total === total
+      ? previous
+      : { current, total })
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.margin.onCommand((command, payload) => {
+      switch (command) {
+        case 'new': newDocument(); break
+        case 'open': void openDocuments(); break
+        case 'save': if (activeId) void saveDocument(activeId); break
+        case 'saveAs': if (activeId) void saveDocument(activeId, { saveAs: true }); break
+        case 'closeTab': if (activeId) void closeTab(activeId); break
+        case 'toggleMode': if (activeTab) setMode(activeTab.mode === 'read' ? 'edit' : 'read'); break
+        case 'toggleOutline': updateSettings({ outlineOpen: !settings.outlineOpen }); break
+        case 'focusMode': setFocusMode((value) => !value); break
+        case 'appearance': setAppearanceOpen(true); break
+        case 'find': openFind(); break
+        case 'replace': openFind(true); break
+        case 'format': if (payload) format(payload); break
+        case 'exportHtml': void exportDocument('html'); break
+        case 'exportPdf': void exportDocument('pdf'); break
+        case 'shortcuts': setDialog('shortcuts'); break
+        case 'about': setDialog('about'); break
+        case 'requestWindowClose': void closeWindow(); break
+      }
+    })
+    return unsubscribe
+  }, [activeId, activeTab, closeTab, closeWindow, exportDocument, format, newDocument, openDocuments, openFind, saveDocument, setMode, settings.outlineOpen, updateSettings])
+
   useEffect(() => {
     let mounted = true
+    const unsubscribe = window.margin.onOpenDocuments((result) => {
+      if (mounted) applyOpenedDocuments(result)
+    })
     void window.margin.loadSession().then((restored) => {
       if (!mounted || tabsRef.current.length) return
+      tabsRef.current = restored
       setTabs(restored)
       setActiveId(restored[0]?.id ?? null)
-    }).catch(() => {}).finally(() => { if (mounted) setSessionReady(true) })
-    return () => { mounted = false }
-  }, [])
+    }).catch((error) => {
+      recoveryWritableRef.current = false
+      if (mounted) showToast(error instanceof Error ? error.message : 'The recovery backup could not be loaded.', 'error')
+    }).finally(() => {
+      if (!mounted) return
+      setSessionReady(true)
+      window.margin.readyForSafeClose()
+      window.margin.readyForOpenDocuments()
+    })
+    return () => {
+      mounted = false
+      unsubscribe()
+    }
+  }, [applyOpenedDocuments, showToast])
 
   useEffect(() => {
     if (!sessionReady) return
     const timeout = window.setTimeout(() => {
-      if (!closingRef.current) void window.margin.saveSession(tabs).catch(() => {
+      if (!closingRef.current && recoveryWritableRef.current) void window.margin.saveSession(tabs).catch(() => {
         if (!recoveryWarningShown.current) {
           recoveryWarningShown.current = true
           showToast('The local recovery backup could not be updated.', 'error')
         }
       })
-    }, 160)
+    }, 1000)
     return () => window.clearTimeout(timeout)
-  }, [sessionReady, showToast, tabs])
+  }, [saveScheduleEpoch, sessionReady, showToast, tabs])
 
   useEffect(() => {
     let checking = false
@@ -316,20 +413,37 @@ export default function App() {
         for (const tab of tabsRef.current) {
           if (!tab.path || tab.saveState === 'saving') continue
           const stat = await window.margin.statDocument(tab.path)
-          if (!stat || tab.mtimeMs == null || Math.abs(stat.mtimeMs - tab.mtimeMs) <= 2) continue
+          if (!stat) continue
+          if (!stat.exists) {
+            if (observedExternalChanges.current.get(tab.path) === -1) continue
+            observedExternalChanges.current.set(tab.path, -1)
+            updateTab(tab.id, { saveState: 'conflict' })
+            showToast(`${tab.name} was moved or deleted. Autosave is paused.`, 'error')
+            continue
+          }
+          if (stat.mtimeMs == null || tab.mtimeMs == null || Math.abs(stat.mtimeMs - tab.mtimeMs) <= 2) continue
           if (observedExternalChanges.current.get(tab.path) === stat.mtimeMs) continue
-          observedExternalChanges.current.set(tab.path, stat.mtimeMs)
           if (tab.content !== tab.savedContent) {
+            observedExternalChanges.current.set(tab.path, stat.mtimeMs)
             updateTab(tab.id, { saveState: 'conflict' })
             showToast(`${tab.name} changed on disk while you were editing.`, 'error')
           } else {
-            const fresh = await window.margin.readDocument(tab.path)
-            updateTab(tab.id, {
-              ...fresh,
-              savedContent: fresh.content,
-              saveState: 'saved',
-            })
-            showToast(`Reloaded ${tab.name}`, 'neutral')
+            try {
+              const fresh = await window.margin.readDocument(tab.path)
+              const latest = tabsRef.current.find((candidate) => candidate.id === tab.id)
+              const outcome = latest ? reconcileExternalReload(latest, tab.mtimeMs, fresh) : null
+              const next = outcome
+                ? tabsRef.current.map((candidate) => candidate.id === tab.id ? outcome.tab : candidate)
+                : tabsRef.current
+              tabsRef.current = next
+              setTabs(next)
+              observedExternalChanges.current.set(tab.path, stat.mtimeMs)
+              if (outcome?.conflict) showToast(`${tab.name} changed on disk while you were editing.`, 'error')
+              else showToast(`Reloaded changes from ${tab.name}.`, 'neutral')
+            } catch (error) {
+              updateTab(tab.id, { saveState: 'conflict' })
+              showToast(error instanceof Error ? error.message : `${tab.name} could not be reloaded safely.`, 'error')
+            }
           }
         }
       } finally {
@@ -350,7 +464,7 @@ export default function App() {
   }, [darkInterface, settings])
 
   useEffect(() => {
-    window.margin.setDirty(tabs.some((tab) => tab.content !== tab.savedContent))
+    window.margin.setDirty(tabs.some(hasUnresolvedChanges))
   }, [tabs])
 
   const autosaveKey = tabs.map((tab) => `${tab.id}:${tab.path ?? ''}:${tab.saveState}:${tab.content.length}:${tab.content === tab.savedContent}`).join('|')
@@ -358,40 +472,16 @@ export default function App() {
     if (!settings.autosave) return
     const timers = tabsRef.current
       .filter((tab) => tab.path && tab.saveState === 'edited' && tab.content !== tab.savedContent)
-      .map((tab) => window.setTimeout(() => void saveDocument(tab.id, { silent: true }), settings.autosaveDelay))
+      .map((tab) => window.setTimeout(() => {
+        if (!closingRef.current && !closingTabsRef.current.has(tab.id)) void saveDocument(tab.id, { silent: true })
+      }, settings.autosaveDelay))
     return () => timers.forEach(window.clearTimeout)
     // autosaveKey intentionally summarizes the change state without retaining entire document strings.
-  }, [autosaveKey, saveDocument, settings.autosave, settings.autosaveDelay])
+  }, [autosaveKey, saveDocument, saveScheduleEpoch, settings.autosave, settings.autosaveDelay])
 
   useEffect(() => {
-    if (!readerFindOpen || !readerFind) {
-      window.margin.stopFind('clearSelection')
-      return
-    }
-    void window.margin.startFind(readerFind)
+    if (!readerFindOpen || !readerFind) setReaderFindStatus({ current: 0, total: 0 })
   }, [readerFind, readerFindOpen])
-
-  useEffect(() => window.margin.onCommand((command, payload) => {
-    switch (command) {
-      case 'new': newDocument(); break
-      case 'open': void openDocuments(); break
-      case 'save': if (activeId) void saveDocument(activeId); break
-      case 'saveAs': if (activeId) void saveDocument(activeId, { saveAs: true }); break
-      case 'closeTab': if (activeId) void closeTab(activeId); break
-      case 'toggleMode': if (activeTab) setMode(activeTab.mode === 'read' ? 'edit' : 'read'); break
-      case 'toggleOutline': updateSettings({ outlineOpen: !settings.outlineOpen }); break
-      case 'focusMode': setFocusMode((value) => !value); break
-      case 'appearance': setAppearanceOpen(true); break
-      case 'find': openFind(); break
-      case 'replace': openFind(true); break
-      case 'format': if (payload) format(payload); break
-      case 'exportHtml': void exportDocument('html'); break
-      case 'exportPdf': void exportDocument('pdf'); break
-      case 'shortcuts': setDialog('shortcuts'); break
-      case 'about': setDialog('about'); break
-      case 'requestWindowClose': void closeWindow(); break
-    }
-  }), [activeId, activeTab, closeTab, closeWindow, exportDocument, format, newDocument, openDocuments, openFind, saveDocument, setMode, settings.outlineOpen, updateSettings])
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -441,7 +531,7 @@ export default function App() {
                 title={tab.path ?? tab.name}
               >
                 <span>{tab.name}</span>
-                {tab.content !== tab.savedContent && <i className="dirty-dot" aria-label="Unsaved changes" />}
+                {hasUnresolvedChanges(tab) && <i className="dirty-dot" aria-label="Unsaved or unresolved changes" />}
                 <span
                   className="tab-close"
                   role="button"
@@ -476,7 +566,17 @@ export default function App() {
                   </Suspense>
                 )
               ))}
-              {activeTab.mode === 'read' && <MarkdownPreview tab={activeTab} active settings={settings} />}
+              {activeTab.mode === 'read' && (
+                <MarkdownPreview
+                  tab={activeTab}
+                  active
+                  settings={settings}
+                  findQuery={readerFindOpen ? readerFind : ''}
+                  findNavigation={readerFindNavigation}
+                  onFindStatus={updateReaderFindStatus}
+                  onOpenLink={openLinkedDocument}
+                />
+              )}
             </div>
           )}
         </div>
@@ -505,8 +605,9 @@ export default function App() {
         <div className="reader-find">
           <Search />
           <input value={readerFind} onChange={(event) => setReaderFind(event.target.value)} placeholder="Find in document" autoFocus />
-          <button onClick={() => void window.margin.startFind(readerFind, { forward: false, findNext: true })}>↑</button>
-          <button onClick={() => void window.margin.startFind(readerFind, { forward: true, findNext: true })}>↓</button>
+          <span className="reader-find-status" aria-live="polite">{readerFindStatus.current}/{readerFindStatus.total}</span>
+          <button aria-label="Previous match" disabled={!readerFindStatus.total} onClick={() => setReaderFindNavigation((value) => ({ sequence: value.sequence + 1, direction: -1 }))}>↑</button>
+          <button aria-label="Next match" disabled={!readerFindStatus.total} onClick={() => setReaderFindNavigation((value) => ({ sequence: value.sequence + 1, direction: 1 }))}>↓</button>
           <button aria-label="Close find" onClick={() => { setReaderFindOpen(false); setReaderFind('') }}><X /></button>
         </div>
       )}
@@ -557,7 +658,7 @@ function InfoDialog({ name, onClose }: { name: Exclude<DialogName, null>; onClos
             <div className="shortcut-grid">
               {[
                 ['New document', '⌘ N'], ['Open', '⌘ O'], ['Save', '⌘ S'], ['Save as', '⇧ ⌘ S'],
-                ['Read / Edit', '⌘ E'], ['Find', '⌘ F'], ['Replace', '⌘ H'], ['Close tab', '⌘ W'],
+                ['Read / Edit', '⌘ E'], ['Find', '⌘ F'], ['Replace', '⌥ ⌘ F'], ['Close tab', '⌘ W'],
                 ['Bold', '⌘ B'], ['Italic', '⌘ I'], ['Link', '⌘ K'], ['Focus mode', '⇧ ⌘ F'],
               ].map(([label, keys]) => <div key={label}><span>{label}</span><kbd>{keys}</kbd></div>)}
             </div>

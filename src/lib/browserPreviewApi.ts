@@ -6,9 +6,10 @@ export function installBrowserPreviewApi() {
   if (window.margin) return
   const browserWindow = window as Window & { find?: (text: string) => boolean }
   const api: MarginApi = {
-    openDocuments: async () => [],
+    openDocuments: async () => ({ documents: [], errors: [] }),
     saveDocument: async () => ({ status: 'cancelled' }),
     readDocument: async () => { throw new Error('Local files are available in the desktop app.') },
+    openLinkedDocument: async () => ({ documents: [], errors: [{ path: '', message: 'Linked files are available in the desktop app.' }] }),
     statDocument: async () => null,
     readAsset: async () => null,
     exportHtml: async () => ({ status: 'cancelled' }),
@@ -19,10 +20,14 @@ export function installBrowserPreviewApi() {
     clearSession: async () => { localStorage.removeItem('margin:session') },
     setDirty: () => {},
     closeWindow: () => {},
+    cancelWindowClose: () => {},
     showItemInFolder: async () => {},
     openExternal: async () => {},
     startFind: async (text) => text && browserWindow.find?.(text) ? 1 : null,
     stopFind: () => window.getSelection()?.removeAllRanges(),
+    onOpenDocuments: () => () => {},
+    readyForOpenDocuments: () => {},
+    readyForSafeClose: () => {},
     onCommand: () => () => {},
   }
   window.margin = api

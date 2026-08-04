@@ -15,6 +15,33 @@ export const DEFAULT_SETTINGS: AppSettings = {
   outlineOpen: true,
 }
 
+const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
+  typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback
+
+const boundedNumber = (value: unknown, minimum: number, maximum: number, fallback: number) =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, value)) : fallback
+
+const safeColor = (value: unknown, fallback: string) =>
+  typeof value === 'string' && /^#[\da-f]{6}$/i.test(value) ? value : fallback
+
+export function normalizeSettings(value: unknown): AppSettings {
+  const input = value && typeof value === 'object' ? value as Partial<AppSettings> : {}
+  return {
+    uiTheme: oneOf(input.uiTheme, ['system', 'light', 'dark'] as const, DEFAULT_SETTINGS.uiTheme),
+    readerTheme: oneOf(input.readerTheme, ['paper', 'snow', 'sepia', 'midnight', 'custom'] as const, DEFAULT_SETTINGS.readerTheme),
+    readerFont: oneOf(input.readerFont, ['serif', 'sans', 'mono'] as const, DEFAULT_SETTINGS.readerFont),
+    fontSize: boundedNumber(input.fontSize, 14, 26, DEFAULT_SETTINGS.fontSize),
+    lineHeight: boundedNumber(input.lineHeight, 1.3, 2.1, DEFAULT_SETTINGS.lineHeight),
+    contentWidth: boundedNumber(input.contentWidth, 560, 1040, DEFAULT_SETTINGS.contentWidth),
+    customBackground: safeColor(input.customBackground, DEFAULT_SETTINGS.customBackground),
+    customText: safeColor(input.customText, DEFAULT_SETTINGS.customText),
+    customAccent: safeColor(input.customAccent, DEFAULT_SETTINGS.customAccent),
+    autosave: typeof input.autosave === 'boolean' ? input.autosave : DEFAULT_SETTINGS.autosave,
+    autosaveDelay: boundedNumber(input.autosaveDelay, 300, 10_000, DEFAULT_SETTINGS.autosaveDelay),
+    outlineOpen: typeof input.outlineOpen === 'boolean' ? input.outlineOpen : DEFAULT_SETTINGS.outlineOpen,
+  }
+}
+
 export function createDocument(content = '', name = 'Untitled.md'): DocumentTab {
   return {
     id: crypto.randomUUID(),
@@ -41,6 +68,58 @@ export function fromOpenedDocument(document: OpenedDocument): DocumentTab {
     saveState: 'saved',
     cursorLine: 1,
     cursorColumn: 1,
+  }
+}
+
+export function hasUnresolvedChanges(tab: DocumentTab): boolean {
+  return tab.content !== tab.savedContent || tab.saveState === 'conflict'
+}
+
+export function mergeOpenedDocuments(currentTabs: DocumentTab[], openedDocuments: OpenedDocument[]) {
+  const tabs = [...currentTabs]
+  const conflicts: string[] = []
+  let activeId: string | null = null
+
+  for (const document of openedDocuments) {
+    const existingIndex = tabs.findIndex((tab) => tab.path === document.path)
+    const existing = tabs[existingIndex]
+    if (existing) {
+      const locallyDirty = existing.content !== existing.savedContent
+      const diskChanged = existing.mtimeMs == null
+        || Math.abs(existing.mtimeMs - document.mtimeMs) > 2
+        || existing.savedContent !== document.content
+      if (!locallyDirty) {
+        tabs[existingIndex] = {
+          ...existing,
+          ...document,
+          savedContent: document.content,
+          saveState: 'saved',
+        }
+      } else if (diskChanged) {
+        tabs[existingIndex] = { ...existing, saveState: 'conflict' }
+        conflicts.push(existing.name)
+      }
+      activeId = existing.id
+      continue
+    }
+    const tab = fromOpenedDocument(document)
+    tabs.push(tab)
+    activeId = tab.id
+  }
+
+  return { tabs, activeId, conflicts }
+}
+
+export function reconcileExternalReload(tab: DocumentTab, expectedMtime: number | null, fresh: OpenedDocument) {
+  if (tab.path !== fresh.path) return { tab, reloaded: false, conflict: false }
+  const changedDuringRead = tab.mtimeMs !== expectedMtime || tab.content !== tab.savedContent
+  if (changedDuringRead) {
+    return { tab: { ...tab, saveState: 'conflict' as const }, reloaded: false, conflict: true }
+  }
+  return {
+    tab: { ...tab, ...fresh, savedContent: fresh.content, saveState: 'saved' as const },
+    reloaded: true,
+    conflict: false,
   }
 }
 
@@ -113,8 +192,7 @@ export function fileStem(name: string): string {
 
 export function loadSettings(): AppSettings {
   try {
-    const saved = JSON.parse(localStorage.getItem('margin:settings') || '{}')
-    return { ...DEFAULT_SETTINGS, ...saved }
+    return normalizeSettings(JSON.parse(localStorage.getItem('margin:settings') || '{}'))
   } catch {
     return DEFAULT_SETTINGS
   }
