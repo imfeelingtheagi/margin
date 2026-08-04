@@ -10,6 +10,7 @@ const {
 } = require('./external-open.cjs')
 
 const isMac = process.platform === 'darwin'
+const developmentIconPath = path.join(__dirname, '..', 'build', 'icon.png')
 const devUrl = !app.isPackaged && process.env.VITE_DEV_SERVER_URL === 'http://127.0.0.1:5173'
   ? process.env.VITE_DEV_SERVER_URL
   : null
@@ -618,6 +619,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 520,
     title: 'Margin',
+    icon: app.isPackaged ? undefined : developmentIconPath,
     backgroundColor: '#f5f3ee',
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -697,6 +699,7 @@ if (!hasSingleInstanceLock) {
 
   app.whenReady().then(async () => {
     app.setName('Margin')
+    if (isMac && !app.isPackaged) app.dock.setIcon(developmentIconPath)
     await registerIpc()
     buildMenu()
     mainWindow = createWindow()

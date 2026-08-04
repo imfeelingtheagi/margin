@@ -90,9 +90,11 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
       "target": ["dmg", "zip"]
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": "nsis"
     },
     "nsis": {
@@ -100,6 +102,7 @@
     },
     "linux": {
       "category": "Office",
+      "icon": "build/icon.png",
       "mimeTypes": ["text/markdown", "text/x-markdown", "text/plain"],
       "target": ["AppImage", "deb"]
     }
