@@ -27,6 +27,7 @@ Open `docs/examples` as a folder in Margin for a small connected notebook you ca
 - Paste clipboard images or drop image files into Edit/Split mode. Margin copies supported images into an `assets/` folder beside the saved document and inserts relative Markdown links. The toolbar's **Image** button provides a file picker for the same workflow.
 - Update task checkboxes from the rendered view, copy code blocks with one click, and export self-contained HTML or print-ready PDF.
 - Stay offline and on-device: no account, analytics, telemetry, cloud sync, or background network requests.
+- Optionally configure the [Agent desk](docs/AGENT_DESK.md) with a separately installed local Ollama model. Ask about permitted notes, extract tasks/decisions, or review proposed Markdown edits and drafts. It starts disabled, checks that cloud features are off, never downloads models, and never changes source documents during generation. Real-model inference testing is currently deferred; builds do not run models.
 
 ## Run from source
 
@@ -53,6 +54,7 @@ Useful commands:
 ```sh
 npm test          # run the test suite once
 npm run test:desktop # build and smoke-test the real Electron app in a temporary profile
+npm run test:agent # isolated Agent desk protocol fixture; no model or weights
 npm run test:watch # run tests while files change
 npm run build     # type-check and build the renderer into dist/
 npm run package:dir # build an unpacked app for this computer

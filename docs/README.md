@@ -11,6 +11,7 @@ The toolbar changes views, the left sidebar navigates files, and the right Readi
 | I want to… | Start here |
 | --- | --- |
 | Run the app, read, edit, annotate, and export | [User guide](USER_GUIDE.md) |
+| Set up the optional local reading/writing helper | [Agent desk](AGENT_DESK.md) |
 | Understand how the pieces work together | [Architecture](ARCHITECTURE.md) |
 | Find my data, back it up, or understand file/network access | [Data and security](DATA_AND_SECURITY.md) |
 | Build, test, package, or extend the app | [Development](DEVELOPMENT.md) |

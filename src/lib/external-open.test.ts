@@ -10,7 +10,7 @@ const {
 } = require('../../electron/external-open.cjs') as {
   extractExternalFilePaths: (argv: string[], options: { isPackaged: boolean; cwd?: string }) => string[]
   normalizeExternalFilePaths: (paths: unknown, cwd?: string) => string[]
-  readDocumentsSettled: <T>(paths: string[], read: (path: string) => Promise<T>) => Promise<{
+  readDocumentsSettled: <T>(paths: string[], read: (path: string) => Promise<T>, options?: { maxFiles?: number; concurrency?: number; maxTotalBytes?: number }) => Promise<{
     documents: T[]
     errors: Array<{ path: string; message: string }>
   }>
@@ -20,6 +20,7 @@ const {
     deliver: (target: object, payload: unknown) => Promise<void> | void
     requestAttention?: () => void
     debounceMs?: number
+    maxQueuedPaths?: number
   }) => {
     enqueue: (paths: string[]) => boolean
     setRendererReady: (target: object) => void
@@ -67,6 +68,18 @@ describe('external file argument parsing', () => {
       null,
     ], '/workspace')).toEqual(['/tmp/note.md'])
   })
+
+  it('accepts Windows drive and UNC document paths without treating them as URL schemes', () => {
+    expect(normalizeExternalFilePaths([
+      'C:\\Users\\Example\\Notes\\plan.md',
+      'c:\\users\\example\\notes\\PLAN.md',
+      '\\\\server\\share\\reference.markdown',
+      'file:///C:/Users/Example/Notes/blocked.md',
+    ], '/workspace')).toEqual([
+      'C:\\Users\\Example\\Notes\\plan.md',
+      '\\\\server\\share\\reference.markdown',
+    ])
+  })
 })
 
 describe('settled document reads', () => {
@@ -78,6 +91,24 @@ describe('settled document reads', () => {
 
     expect(result.documents).toEqual([{ path: '/tmp/good.md', content: '# Good' }])
     expect(result.errors).toEqual([{ path: '/tmp/bad.md', message: 'Binary file rejected' }])
+  })
+
+  it('bounds concurrent reads, file count, and retained batch content', async () => {
+    let active = 0
+    let peak = 0
+    const result = await readDocumentsSettled(['/1.md', '/2.md', '/3.md', '/4.md'], async (filePath: string) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await Promise.resolve()
+      active -= 1
+      return { path: filePath, content: '1234' }
+    }, { maxFiles: 3, concurrency: 2, maxTotalBytes: 8 })
+
+    expect(peak).toBeLessThanOrEqual(2)
+    expect(result.documents.map((document) => document.path)).toEqual(['/1.md', '/2.md'])
+    expect(result.errors).toHaveLength(2)
+    expect(result.errors[0].message).toContain('open-batch limit')
+    expect(result.errors[1].message).toContain('1 additional document was skipped')
   })
 })
 
@@ -117,6 +148,23 @@ describe('external open coordinator', () => {
       errors: [],
     }])
     expect(coordinator.pendingCount()).toBe(0)
+    coordinator.destroy()
+  })
+
+  it('bounds queued external file batches and reports skipped paths', async () => {
+    const delivered: any[] = []
+    const coordinator = createExternalOpenCoordinator({
+      readDocument: async (filePath: string) => ({ path: filePath }),
+      deliver: (_target: object, payload: unknown) => { delivered.push(payload) },
+      debounceMs: 60_000,
+      maxQueuedPaths: 2,
+    })
+    coordinator.enqueue(['/tmp/1.md', '/tmp/2.md', '/tmp/3.md'])
+    expect(coordinator.pendingCount()).toBe(2)
+    coordinator.setRendererReady({})
+    await coordinator.flush()
+    expect(delivered[0].documents).toHaveLength(2)
+    expect(delivered[0].errors[0].message).toContain('1 additional document was skipped')
     coordinator.destroy()
   })
 

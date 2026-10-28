@@ -5,9 +5,13 @@ import { installBrowserPreviewApi } from './lib/browserPreviewApi'
 import 'katex/dist/katex.min.css'
 import 'highlight.js/styles/github.css'
 import './styles.css'
+import './features.css'
 
-if (import.meta.env.DEV) installBrowserPreviewApi()
-document.documentElement.dataset.platform = /Mac/i.test(navigator.platform) ? 'darwin' : 'other'
+const isLocalBrowserPreview = /^https?:$/.test(window.location.protocol) && ['127.0.0.1', 'localhost'].includes(window.location.hostname)
+if (import.meta.env.DEV || isLocalBrowserPreview) installBrowserPreviewApi()
+document.documentElement.dataset.platform = /Mac/i.test(navigator.platform)
+  ? 'darwin'
+  : /Win/i.test(navigator.platform) ? 'win32' : 'other'
 
 const root = createRoot(document.getElementById('root')!)
 

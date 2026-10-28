@@ -1,0 +1,48 @@
+name: Desktop verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Native desktop smoke test
+        if: runner.os != 'Linux'
+        run: npm run test:desktop
+      - name: Linux desktop smoke test
+        if: runner.os == 'Linux'
+        env:
+          MARGIN_TEST_NO_SANDBOX: '1'
+        run: xvfb-run -a npm run test:desktop
+      - name: Package desktop app
+        run: npm run package:dir
+      - name: Agent desk protocol smoke test
+        if: runner.os != 'Linux'
+        run: node scripts/agent-smoke.cjs
+      - name: Linux Agent desk protocol smoke test
+        if: runner.os == 'Linux'
+        env:
+          MARGIN_TEST_NO_SANDBOX: '1'
+        run: xvfb-run -a node scripts/agent-smoke.cjs

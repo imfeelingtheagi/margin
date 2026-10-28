@@ -36,6 +36,15 @@ async function capture() {
     await page.getByRole('button', { name: 'Open file', exact: true }).click()
     await page.locator('.note-embed-body strong').waitFor()
     await page.locator('.mermaid-block.is-rendered svg').waitFor()
+    if (process.env.MARGIN_CAPTURE_AGENT_SETUP_ONLY === '1') {
+      await page.getByRole('button', { name: 'Agent desk', exact: true }).click()
+      await page.getByText('Disabled · configure a local model', { exact: true }).waitFor()
+      await page.getByText('Offline setup instructions', { exact: true }).click()
+      await page.locator('.toast').waitFor({ state: 'hidden' })
+      await shot('agent-setup')
+      console.log(`Saved disabled Agent desk screenshot to ${output}; no runtime check or inference was requested.`)
+      return
+    }
     await page.getByRole('button', { name: 'Reading tools and connections', exact: true }).click()
     await page.getByRole('button', { name: 'Bookmark document', exact: true }).click()
     await page.evaluate(() => {

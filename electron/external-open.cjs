@@ -1,6 +1,14 @@
 const path = require('node:path')
 const supportedDocumentExtensions = new Set(['.md', '.markdown', '.mdown', '.mkd', '.txt'])
 
+function isWindowsAbsolutePath(value) {
+  return /^[a-z]:[\\/]/i.test(value) || /^\\\\/.test(value)
+}
+
+function resolveExternalPath(value, cwd = process.cwd()) {
+  return isWindowsAbsolutePath(value) ? path.win32.resolve(value) : path.resolve(cwd, value)
+}
+
 function extractExternalFilePaths(argv, { isPackaged, cwd = process.cwd() }) {
   if (!Array.isArray(argv)) return []
   const firstUserArgument = isPackaged ? 1 : 2
@@ -13,10 +21,12 @@ function normalizeExternalFilePaths(candidates, cwd = process.cwd()) {
 
   for (const argument of candidates || []) {
     if (typeof argument !== 'string' || !argument || argument === '--') continue
-    if (argument.startsWith('-') || /^[a-z][a-z\d+.-]*:/i.test(argument)) continue
-    const resolved = path.resolve(cwd, argument)
-    if (!supportedDocumentExtensions.has(path.extname(resolved).toLowerCase())) continue
-    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved
+    const windowsAbsolute = isWindowsAbsolutePath(argument)
+    if (argument.startsWith('-') || (!windowsAbsolute && /^[a-z][a-z\d+.-]*:/i.test(argument))) continue
+    const resolved = resolveExternalPath(argument, cwd)
+    const pathFlavor = windowsAbsolute ? path.win32 : path
+    if (!supportedDocumentExtensions.has(pathFlavor.extname(resolved).toLowerCase())) continue
+    const key = process.platform === 'win32' || windowsAbsolute ? resolved.toLowerCase() : resolved
     if (seen.has(key)) continue
     seen.add(key)
     paths.push(resolved)
@@ -25,22 +35,53 @@ function normalizeExternalFilePaths(candidates, cwd = process.cwd()) {
   return paths
 }
 
-async function readDocumentsSettled(filePaths, readDocument) {
-  const settled = await Promise.allSettled(filePaths.map((filePath) => readDocument(filePath)))
+async function readDocumentsSettled(filePaths, readDocument, {
+  maxFiles = 100,
+  concurrency = 3,
+  maxTotalBytes = 100 * 1024 * 1024,
+} = {}) {
+  const candidates = Array.isArray(filePaths) ? filePaths.slice(0, maxFiles) : []
+  const results = new Array(candidates.length)
+  let cursor = 0
+  let totalBytes = 0
+
+  const worker = async () => {
+    while (cursor < candidates.length) {
+      const index = cursor
+      cursor += 1
+      const filePath = candidates[index]
+      try {
+        const document = await readDocument(filePath)
+        const bytes = typeof document?.content === 'string' ? Buffer.byteLength(document.content, 'utf8') : 0
+        if (bytes > maxTotalBytes - totalBytes) {
+          results[index] = { error: new Error('The selected files exceed Margin’s 100 MB open-batch limit.') }
+          continue
+        }
+        totalBytes += bytes
+        results[index] = { document }
+      } catch (error) {
+        results[index] = { error }
+      }
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(8, concurrency, candidates.length || 1))
+  await Promise.all(Array.from({ length: workerCount }, worker))
   const documents = []
   const errors = []
-
-  settled.forEach((result, index) => {
-    if (result.status === 'fulfilled') {
-      documents.push(result.value)
-      return
-    }
-    errors.push({
-      path: filePaths[index],
-      message: result.reason instanceof Error ? result.reason.message : 'The document could not be opened.',
+  results.forEach((result, index) => {
+    if (result?.document) documents.push(result.document)
+    else errors.push({
+      path: candidates[index],
+      message: result?.error instanceof Error ? result.error.message : 'The document could not be opened.',
     })
   })
-
+  if (filePaths.length > candidates.length) {
+    errors.push({
+      path: '',
+      message: `${filePaths.length - candidates.length} additional document${filePaths.length - candidates.length === 1 ? ' was' : 's were'} skipped. Open batches are limited to ${maxFiles} files.`,
+    })
+  }
   return { documents, errors }
 }
 
@@ -73,16 +114,18 @@ function createExternalOpenCoordinator({
   deliver,
   requestAttention = () => {},
   debounceMs = 20,
+  maxQueuedPaths = 100,
 }) {
   const queuedPaths = []
   const queuedKeys = new Set()
   let readyTarget = null
   let flushTimer = null
   let inFlight = null
+  let droppedCount = 0
 
   const keyFor = (filePath) => {
-    const resolved = path.resolve(filePath)
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+    const resolved = resolveExternalPath(filePath)
+    return process.platform === 'win32' || isWindowsAbsolutePath(filePath) ? resolved.toLowerCase() : resolved
   }
 
   const requeueFront = (filePaths) => {
@@ -107,9 +150,13 @@ function createExternalOpenCoordinator({
     let added = false
     for (const candidate of filePaths || []) {
       if (typeof candidate !== 'string' || !candidate) continue
-      const resolved = path.resolve(candidate)
+      const resolved = resolveExternalPath(candidate)
       const key = keyFor(resolved)
       if (queuedKeys.has(key)) continue
+      if (queuedPaths.length >= maxQueuedPaths) {
+        droppedCount += 1
+        continue
+      }
       queuedKeys.add(key)
       queuedPaths.push(resolved)
       added = true
@@ -138,10 +185,16 @@ function createExternalOpenCoordinator({
 
     const target = readyTarget
     const batch = queuedPaths.splice(0)
+    const droppedInBatch = droppedCount
+    droppedCount = 0
     batch.forEach((filePath) => queuedKeys.delete(keyFor(filePath)))
 
     inFlight = (async () => {
       const payload = await readDocumentsSettled(batch, readDocument)
+      if (droppedInBatch) payload.errors.push({
+        path: '',
+        message: `${droppedInBatch} additional document${droppedInBatch === 1 ? ' was' : 's were'} skipped. External open batches are limited to ${maxQueuedPaths} files.`,
+      })
       if (target !== readyTarget) {
         requeueFront(batch)
         return null

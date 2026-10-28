@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "description": "A calm, local-first Markdown reader and editor for the desktop.",
+  "desktopName": "margin",
+  "author": {
+    "name": "imfeelingtheagi",
+    "email": "imfeelingtheagi@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/imfeelingtheagi/margin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imfeelingtheagi/margin.git"
+  },
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -11,25 +21,41 @@
     "start": "electron .",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
+    "test:desktop": "npm run build && node scripts/desktop-smoke.cjs",
+    "test:agent": "npm run build && node scripts/agent-smoke.cjs",
     "test:watch": "vitest",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir"
   },
   "engines": {
-    "node": ">=22 <27"
+    "node": "^22.22.2 || ^24.15.0 || ^26.0.0"
   },
-  "dependencies": {
+  "devDependencies": {
+    "@codemirror/autocomplete": "6.20.3",
     "@codemirror/commands": "latest",
     "@codemirror/lang-markdown": "latest",
     "@codemirror/language-data": "latest",
     "@codemirror/search": "latest",
     "@codemirror/state": "latest",
     "@codemirror/view": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/katex": "latest",
+    "@types/markdown-it": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
     "@uiw/react-codemirror": "latest",
+    "@vitejs/plugin-react": "latest",
     "@vscode/markdown-it-katex": "latest",
+    "concurrently": "latest",
+    "cross-env": "latest",
     "dompurify": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
     "highlight.js": "latest",
-    "katex": "latest",
+    "jsdom": "latest",
+    "katex": "0.19.1",
     "lucide-react": "latest",
     "markdown-it": "latest",
     "markdown-it-anchor": "latest",
@@ -40,27 +66,16 @@
     "markdown-it-sup": "latest",
     "markdown-it-task-lists": "latest",
     "mermaid": "latest",
+    "playwright": "1.62.1",
     "react": "latest",
-    "react-dom": "latest"
-  },
-  "devDependencies": {
-    "@testing-library/jest-dom": "latest",
-    "@testing-library/react": "latest",
-    "@types/katex": "latest",
-    "@types/markdown-it": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
-    "concurrently": "latest",
-    "cross-env": "latest",
-    "electron": "latest",
-    "electron-builder": "latest",
-    "jsdom": "latest",
+    "react-dom": "latest",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest",
     "wait-on": "latest"
+  },
+  "overrides": {
+    "katex": "$katex"
   },
   "build": {
     "appId": "app.margin.markdown",
@@ -76,7 +91,12 @@
     },
     "fileAssociations": [
       {
-        "ext": ["md", "markdown", "mdown", "mkd"],
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd"
+        ],
         "name": "Markdown Document",
         "role": "Editor",
         "rank": "Default"
@@ -91,7 +111,10 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
       "icon": "build/icon.ico",
@@ -102,9 +125,21 @@
     },
     "linux": {
       "category": "Office",
+      "executableArgs": [
+        "%F"
+      ],
       "icon": "build/icon.png",
-      "mimeTypes": ["text/markdown", "text/x-markdown", "text/plain"],
-      "target": ["AppImage", "deb"]
+      "maintainer": "imfeelingtheagi <imfeelingtheagi@users.noreply.github.com>",
+      "mimeTypes": [
+        "text/markdown",
+        "text/x-markdown",
+        "text/plain"
+      ],
+      "syncDesktopName": true,
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
   }
 }

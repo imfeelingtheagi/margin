@@ -21,7 +21,7 @@ export function highlightReaderFind(container: HTMLElement, query: string): HTML
     acceptNode(node) {
       const parent = node.parentElement
       if (!parent || !node.nodeValue) return filter.FILTER_REJECT
-      if (parent.closest('script, style, textarea, svg, [aria-hidden="true"]')) return filter.FILTER_REJECT
+      if (parent.closest('script, style, textarea, svg, [aria-hidden="true"], [data-margin-copy-code]')) return filter.FILTER_REJECT
       return filter.FILTER_ACCEPT
     },
   })

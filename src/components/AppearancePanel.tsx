@@ -1,8 +1,10 @@
+import { useEffect, useId, useRef } from 'react'
 import { Check, X } from 'lucide-react'
-import type { AppSettings, ReaderFont, ReaderTheme, UiTheme } from '../types'
+import type { AppSettings, EditorFont, ReaderFont, ReaderTheme, UiTheme } from '../types'
 
 interface AppearancePanelProps {
   settings: AppSettings
+  spellcheckAvailable: boolean
   onChange: (patch: Partial<AppSettings>) => void
   onClose: () => void
 }
@@ -10,19 +12,55 @@ interface AppearancePanelProps {
 const choices = <T extends string>(values: Array<{ value: T; label: string }>, selected: T, onChange: (value: T) => void) => (
   <div className="choice-grid">
     {values.map(({ value, label }) => (
-      <button key={value} className={selected === value ? 'is-selected' : ''} onClick={() => onChange(value)}>
+      <button key={value} aria-pressed={selected === value} className={selected === value ? 'is-selected' : ''} onClick={() => onChange(value)}>
         {label}{selected === value && <Check />}
       </button>
     ))}
   </div>
 )
 
-export function AppearancePanel({ settings, onChange, onClose }: AppearancePanelProps) {
+const ToggleSetting = ({ label, description, checked, disabled = false, onChange }: {
+  label: string; description: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void
+}) => {
+  const descriptionId = useId()
   return (
-    <aside className="appearance-panel" aria-label="Appearance settings">
+    <section className="toggle-setting">
+      <div><strong>{label}</strong><span id={descriptionId}>{description}</span></div>
+      <button role="switch" aria-label={label} aria-describedby={descriptionId} aria-checked={checked} className={checked ? 'is-on' : ''} disabled={disabled} onClick={() => onChange(!checked)}><i /></button>
+    </section>
+  )
+}
+
+export function AppearancePanel({ settings, spellcheckAvailable, onChange, onClose }: AppearancePanelProps) {
+  const panelRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const headingId = useId()
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    closeRef.current?.focus()
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
+      if (event.key !== 'Tab' || !panelRef.current) return
+      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+      if (!focusable.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      previouslyFocused?.focus()
+    }
+  }, [onClose])
+
+  return (
+    <aside ref={panelRef} className="appearance-panel" role="dialog" aria-modal="true" aria-labelledby={headingId}>
       <header>
-        <div><span className="eyebrow">Settings</span><h2>Appearance</h2></div>
-        <button className="icon-button" aria-label="Close appearance" onClick={onClose}><X /></button>
+        <div><span className="eyebrow">Preferences</span><h2 id={headingId}>Settings</h2></div>
+        <button ref={closeRef} className="icon-button" aria-label="Close settings" onClick={onClose}><X /></button>
       </header>
 
       <div className="settings-scroll">
@@ -37,7 +75,7 @@ export function AppearancePanel({ settings, onChange, onClose }: AppearancePanel
           <label className="settings-label">Reading surface</label>
           <div className="theme-swatches">
             {(['paper', 'snow', 'sepia', 'midnight', 'custom'] as ReaderTheme[]).map((theme) => (
-              <button key={theme} className={`theme-swatch swatch-${theme} ${settings.readerTheme === theme ? 'is-selected' : ''}`} onClick={() => onChange({ readerTheme: theme })}>
+              <button key={theme} aria-pressed={settings.readerTheme === theme} className={`theme-swatch swatch-${theme} ${settings.readerTheme === theme ? 'is-selected' : ''}`} onClick={() => onChange({ readerTheme: theme })}>
                 <i /><span>{theme[0].toUpperCase() + theme.slice(1)}</span>{settings.readerTheme === theme && <Check />}
               </button>
             ))}
@@ -65,10 +103,48 @@ export function AppearancePanel({ settings, onChange, onClose }: AppearancePanel
           <label><span>Page width <b>{settings.contentWidth}px</b></span><input type="range" min="560" max="1040" step="20" value={settings.contentWidth} onChange={(e) => onChange({ contentWidth: Number(e.target.value) })} /></label>
         </section>
 
-        <section className="toggle-setting">
-          <div><strong>Autosave files</strong><span>Save shortly after you stop typing.</span></div>
-          <button role="switch" aria-checked={settings.autosave} className={settings.autosave ? 'is-on' : ''} onClick={() => onChange({ autosave: !settings.autosave })}><i /></button>
+        <section className="settings-group-heading">
+          <h3 className="eyebrow">Editor</h3>
+          <p>Source-view behavior and typography.</p>
         </section>
+
+        <section>
+          <label className="settings-label">Editor typeface</label>
+          {choices<EditorFont>([
+            { value: 'mono', label: 'Mono' }, { value: 'sans', label: 'Sans' },
+          ], settings.editorFont, (editorFont) => onChange({ editorFont }))}
+        </section>
+
+        <section className="range-settings">
+          <label><span>Editor size <b>{settings.editorFontSize}px</b></span><input type="range" min="12" max="24" value={settings.editorFontSize} onChange={(e) => onChange({ editorFontSize: Number(e.target.value) })} /></label>
+          <label><span>Editor line height <b>{settings.editorLineHeight.toFixed(2)}</b></span><input type="range" min="1.2" max="2.2" step="0.05" value={settings.editorLineHeight} onChange={(e) => onChange({ editorLineHeight: Number(e.target.value) })} /></label>
+          <label><span>Editor width <b>{settings.editorContentWidth}px</b></span><input type="range" min="560" max="1400" step="20" value={settings.editorContentWidth} onChange={(e) => onChange({ editorContentWidth: Number(e.target.value) })} /></label>
+          <label><span>Tab width <b>{settings.editorTabSize}</b></span><input type="range" min="2" max="8" step="1" value={settings.editorTabSize} onChange={(e) => onChange({ editorTabSize: Number(e.target.value) })} /></label>
+        </section>
+
+        <section><label className="settings-label">Writing focus</label>{choices<AppSettings['editorFocus']>([
+          { value: 'off', label: 'Off' }, { value: 'sentence', label: 'Sentence' }, { value: 'paragraph', label: 'Paragraph' },
+        ], settings.editorFocus, (editorFocus) => onChange({ editorFocus }))}</section>
+        <ToggleSetting label="Word wrap" description="Wrap long lines without changing the file." checked={settings.editorWordWrap} onChange={(editorWordWrap) => onChange({ editorWordWrap })} />
+        <ToggleSetting label="Line numbers" description="Show source line numbers in the gutter." checked={settings.editorLineNumbers} onChange={(editorLineNumbers) => onChange({ editorLineNumbers })} />
+        <ToggleSetting
+          label="Spellcheck"
+          description={spellcheckAvailable ? 'Use the operating system’s on-device spelling service.' : 'Unavailable without a bundled local dictionary; Margin will not download one.'}
+          checked={spellcheckAvailable && settings.editorSpellcheck}
+          disabled={!spellcheckAvailable}
+          onChange={(editorSpellcheck) => onChange({ editorSpellcheck })}
+        />
+        <ToggleSetting label="Visible whitespace" description="Reveal spaces and tabs while editing." checked={settings.editorShowWhitespace} onChange={(editorShowWhitespace) => onChange({ editorShowWhitespace })} />
+        <ToggleSetting label="Code folding" description="Show controls for folding Markdown sections." checked={settings.editorCodeFolding} onChange={(editorCodeFolding) => onChange({ editorCodeFolding })} />
+        <ToggleSetting label="Typewriter mode" description="Keep the current line near the center." checked={settings.editorTypewriterMode} onChange={(editorTypewriterMode) => onChange({ editorTypewriterMode })} />
+        <ToggleSetting label="Indent with tabs" description="Use tab characters instead of spaces." checked={settings.editorIndentWithTabs} onChange={(editorIndentWithTabs) => onChange({ editorIndentWithTabs })} />
+
+        <section className="settings-group-heading">
+          <h3 className="eyebrow">Files</h3>
+          <p>Saving and local recovery behavior.</p>
+        </section>
+
+        <ToggleSetting label="Autosave files" description="Save after you stop typing." checked={settings.autosave} onChange={(autosave) => onChange({ autosave })} />
       </div>
     </aside>
   )

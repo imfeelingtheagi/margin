@@ -42,4 +42,12 @@ describe('reader find', () => {
     expect(matches.map((match) => match.textContent)).toEqual(['İ', 'İ'])
     expect(container.textContent).toBe('İstanbul İSTANBUL')
   })
+
+  it('does not treat preview controls as document matches', () => {
+    const container = document.createElement('article')
+    container.innerHTML = '<p>Copy this value</p><button data-margin-copy-code>Copy</button>'
+
+    expect(highlightReaderFind(container, 'copy')).toHaveLength(1)
+    expect(container.querySelector('button mark')).toBeNull()
+  })
 })

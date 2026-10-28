@@ -74,6 +74,7 @@ Renderer TypeScript uses ES modules. Native Electron and supporting scripts use 
 | `npm run test:watch` | Run tests interactively while developing |
 | `npm run build` | Type-check renderer code and generate production assets |
 | `npm run test:desktop` | Build, then exercise the native Electron application with private fixtures/profile |
+| `npm run test:agent` | Build, then exercise the Agent desk with an isolated deterministic loopback fixture; no real model/weights |
 | `npm run package:dir` | Build an unpacked app for this host OS/architecture |
 | `npm run package` | Build configured distribution packages for the host platform |
 | `npm audit` | Inspect the installed dependency graph against the available advisory data; needs network |
@@ -119,6 +120,10 @@ MARGIN_SMOKE_EXECUTABLE="$PWD/release/mac-arm64/Margin.app/Contents/MacOS/Margin
 This environment variable expects the executable inside the bundle, not the `.app` directory. The test still uses a separate `--user-data-dir` and asserts that its actual profile matches the fixture path. That is a testing invocation, not advice to distribute the inner executable alone.
 
 ### Headless Linux and Docker
+
+The Agent desk also has `scripts/agent-smoke.cjs`: a real Electron/IPC/file workflow driven by a synthetic Ollama-protocol server. It verifies disabled/default behavior, local-only checks, source references, review/reject/accept, undo, stale edits, cancellation, explicit folder scope, and unsaved drafts without loading a model. In unpackaged tests only, `MARGIN_TEST_OLLAMA_PORT` can choose an ephemeral fixture port when `NODE_ENV=test` and an explicit temporary profile are present. Packaged apps ignore this override and use `127.0.0.1:11434`.
+
+Real-model inference testing is currently deferred at the user's request. Never run `ollama run`, pull weights, or start a live inference task as part of a build. Protocol tests prove integration and safety behavior, not model quality. See the [Agent desk guide](AGENT_DESK.md).
 
 With Electron system dependencies already available:
 

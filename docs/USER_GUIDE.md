@@ -4,6 +4,8 @@
 
 This guide follows a complete workflow: open a notebook, read and annotate, edit, connect notes, and export. Throughout, **Cmd/Ctrl** means Command on macOS and Control on Windows/Linux.
 
+Margin also has an optional, initially disabled [Agent desk](AGENT_DESK.md). It uses a separately installed local Ollama model to answer questions and propose reviewed edits. It is not required for the workflows below, and building the app never downloads or runs a model.
+
 ## 1. Start Margin
 
 ### Packaged app

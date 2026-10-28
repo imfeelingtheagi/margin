@@ -32,6 +32,8 @@ flowchart TD
 | Recovery snapshot | `recovery-session.json` in the app profile | Bounded drafts/tab state for interrupted exits; cleared on successful normal window close |
 | Preserved invalid recovery | `recovery-session.json.invalid-<timestamp>` | A damaged/unsupported snapshot is renamed for preservation when possible |
 | Settings | `localStorage["margin:settings"]` | Theme, typography, editor options, autosave, sidebar preference |
+| Agent settings | `agent-settings.json` in the app profile | Disabled by default; stores enabled flag and selected local model |
+| Agent restore points | `agent-restore-points/*.json` in the app profile | Rolling pre-edit text and post-edit checksums; twenty records / 50 MiB; may contain private document text |
 | Preferred active tab | `localStorage["margin:active-tab"]` | Useful when restoring a recovery session; not a permanent tab history |
 | Reading library | `localStorage["margin:reading-library:v1"]` | Bookmarks, annotations, position/progress, collapsed headings |
 | OS recent documents | Operating-system facility | Separate from Margin's remembered-path JSON; clearing the native recent list does not erase reading metadata |
@@ -129,13 +131,14 @@ Workspace traversal ignores `.git`, `.hg`, `.svn`, and `node_modules`. Symbolic 
 
 ## What offline means
 
-The packaged app has no accounts, analytics, telemetry, AI service, hosted sync, remote font loading, or background HTTP feature. Local rendering/indexing happens on your device. A main-process session request filter rejects web requests and direct file loads outside the packaged assets.
+The packaged app has no accounts, analytics, telemetry, hosted AI service, hosted sync, remote font loading, or background web feature. Local rendering/indexing happens on your device. A main-process session request filter rejects web requests and direct file loads outside the packaged assets. The optional [Agent desk](AGENT_DESK.md) adds an explicit, separately validated main-process loopback transport; it does not relax the renderer's request filter.
 
 There are narrow exceptions, not a general network permission:
 
 - `data:`, `blob:`, and `about:` resources support local generated content.
 - Each hidden PDF window can load its one registered temporary HTML file. This exception is removed afterward.
 - Development allows HTTP/WebSocket requests only to the configured `127.0.0.1:5173` Vite server, plus development tooling. This is not a packaged-app dependency.
+- When explicitly configured/used, the Agent desk permits only its fixed loopback Ollama status, tags, show, and chat operations at `127.0.0.1:11434`. Redirects, remote models, cloud-enabled runtimes, arbitrary endpoints, model pulls, and proxy routing are refused. Document text is sent only after the local-only preflight. Margin cannot govern a separately installed runtime's updater, logs, or other clients.
 - Explicitly activating an HTTP/HTTPS/mail link hands it to the OS browser/mail handler. That external application can use the network under its own settings. Opening a link is different from background fetching by Margin.
 
 Dependencies/Electron downloads during installation, developer tools, Git/GitHub, Docker image pulls, and CI are development activities, not evidence that an installed app needs an online session. There is no automatic update workflow implemented here.

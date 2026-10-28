@@ -160,7 +160,13 @@ HTML export writes that standalone document through a user-chosen save dialog. P
 
 The exported Content Security Policy denies scripts and background resource loading. Body text relies on installed font fallbacks; math fonts are embedded. Linked notes are not automatically exported as a complete site.
 
-## 9. Extension rules
+## 9. Optional Agent desk
+
+The lazy-loaded [AgentDesk](../src/components/AgentDesk.tsx) calls named preload operations implemented by [agent-host.cjs](../electron/agent-host.cjs). The host grants immutable target/attachment/folder snapshots, owns cancellation, and prepares restore points only after explicit acceptance. [agent.cjs](../electron/agent.cjs) implements the bounded read/search/proposal loop and fixed loopback Ollama transport, without SDK/framework dependencies, direct model filesystem access, shell execution, or a web tool.
+
+The renderer's network policy is unchanged. Agent HTTP uses a separate allowlist: status/tags/show/chat at `127.0.0.1:11434`, no redirects/proxies/pull operations. Cloud-disabled status and installed local model capability are checked before document text is sent. Proposed edits are staged data; accepted changes recheck source identity/revisions and disk baseline, create a bounded restore point, then enter CodeMirror as ordinary undoable text transactions. No model is bundled or loaded during app startup/build. Read the [Agent desk guide](AGENT_DESK.md) for the full lifecycle and deferred real-model testing status.
+
+## 10. Extension rules
 
 For future changes, preserve the existing boundaries:
 

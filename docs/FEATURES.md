@@ -19,7 +19,8 @@ The product remains a cross-platform, offline desktop Markdown reader/editor. Ma
 | Presentation | Heading/separator-based slides, one slide rendered at a time, keyboard navigation, math/diagrams/embeds |
 | Export | Self-contained HTML/PDF with local images, fonts, math, diagrams, and embedded note content; wiki links become file links |
 | Persistence | Atomic document writes, save conflict detection, autosave, external reload checks, crash recovery, persistent reading metadata |
-| Privacy | No accounts, telemetry, cloud services, dictionary downloads, AI calls, or background HTTP requests |
+| Optional Agent desk | Local-only Ollama, explicit context, cited answers, reviewed single-document edits/drafts, cancellation, guarded undo; no model bundled/downloaded |
+| Privacy | No accounts, telemetry, hosted AI/cloud fallback, dictionary downloads, or background web requests; the optional desk uses explicit loopback requests |
 
 ## Implementation choices
 

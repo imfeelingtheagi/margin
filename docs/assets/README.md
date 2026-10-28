@@ -9,6 +9,7 @@ These PNGs are real screenshots of Margin's production renderer using the public
 | [split.png](split.png) | Source and rendered preview side by side |
 | [graph.png](graph.png) | Sample-note graph with zoom controls |
 | [dark.png](dark.png) | Dark interface and Midnight reading surface |
+| [agent-setup.png](agent-setup.png) | Disabled Agent desk and expanded offline instructions; no model loaded or inference performed |
 
 Screenshots use a 1440 × 960 CSS-pixel content-size request and are captured at CSS scale. Platform/window constraints can affect the actual captured height, so use the PNG dimensions as authoritative. The macOS captures can differ cosmetically from Windows/Linux.
 
@@ -28,6 +29,14 @@ MARGIN_SMOKE_EXECUTABLE="$PWD/release/mac-arm64/Margin.app/Contents/MacOS/Margin
 ```
 
 The tool copies example notes to a fresh temporary directory, launches a fresh profile, selects only those fixtures through test dialog handlers, and asserts the profile path before proceeding. It writes the five named screenshots here and prints the fixture location. A real user profile is never needed. Review each image for completed rendering and readable framing before accepting the update.
+
+The additional disabled Agent desk screenshot can be refreshed without connecting to Ollama or loading a model:
+
+```sh
+MARGIN_CAPTURE_AGENT_SETUP_ONLY=1 node docs/capture-screenshots.cjs
+```
+
+Use a current source build for that capture. The deterministic Agent desk protocol-smoke screenshots are test artifacts, not real-model examples, and are not used to claim inference quality in this guide.
 
 The diagrams are maintained as Mermaid source inside the architecture/data guides. Margin renders them locally from its bundled engine; GitHub also renders compatible fenced Mermaid blocks. They explain real process/data relationships and are not screenshots of an imaginary UI.
 

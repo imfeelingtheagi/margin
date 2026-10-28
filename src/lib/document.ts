@@ -1,4 +1,8 @@
-import type { AppSettings, DocumentTab, OpenedDocument, OutlineItem } from '../types'
+import type { AppSettings, DocumentTab, OpenedDocument } from '../types'
+export { slugifyHeading } from './headings'
+
+export const MAX_OPEN_TABS = 100
+export const MAX_OPEN_CONTENT_BYTES = 200 * 1024 * 1024
 
 export const DEFAULT_SETTINGS: AppSettings = {
   uiTheme: 'system',
@@ -10,6 +14,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customBackground: '#f7f4ec',
   customText: '#272822',
   customAccent: '#27766f',
+  editorWordWrap: true,
+  editorLineNumbers: true,
+  editorSpellcheck: true,
+  editorShowWhitespace: false,
+  editorCodeFolding: true,
+  editorTypewriterMode: false,
+  editorFocus: 'off',
+  editorFont: 'mono',
+  editorFontSize: 15,
+  editorLineHeight: 1.68,
+  editorContentWidth: 960,
+  editorTabSize: 2,
+  editorIndentWithTabs: false,
   autosave: true,
   autosaveDelay: 1200,
   outlineOpen: true,
@@ -36,6 +53,19 @@ export function normalizeSettings(value: unknown): AppSettings {
     customBackground: safeColor(input.customBackground, DEFAULT_SETTINGS.customBackground),
     customText: safeColor(input.customText, DEFAULT_SETTINGS.customText),
     customAccent: safeColor(input.customAccent, DEFAULT_SETTINGS.customAccent),
+    editorWordWrap: typeof input.editorWordWrap === 'boolean' ? input.editorWordWrap : DEFAULT_SETTINGS.editorWordWrap,
+    editorLineNumbers: typeof input.editorLineNumbers === 'boolean' ? input.editorLineNumbers : DEFAULT_SETTINGS.editorLineNumbers,
+    editorSpellcheck: typeof input.editorSpellcheck === 'boolean' ? input.editorSpellcheck : DEFAULT_SETTINGS.editorSpellcheck,
+    editorShowWhitespace: typeof input.editorShowWhitespace === 'boolean' ? input.editorShowWhitespace : DEFAULT_SETTINGS.editorShowWhitespace,
+    editorCodeFolding: typeof input.editorCodeFolding === 'boolean' ? input.editorCodeFolding : DEFAULT_SETTINGS.editorCodeFolding,
+    editorTypewriterMode: typeof input.editorTypewriterMode === 'boolean' ? input.editorTypewriterMode : DEFAULT_SETTINGS.editorTypewriterMode,
+    editorFocus: oneOf(input.editorFocus, ['off', 'sentence', 'paragraph'] as const, 'off'),
+    editorFont: oneOf(input.editorFont, ['mono', 'sans'] as const, DEFAULT_SETTINGS.editorFont),
+    editorFontSize: boundedNumber(input.editorFontSize, 12, 24, DEFAULT_SETTINGS.editorFontSize),
+    editorLineHeight: boundedNumber(input.editorLineHeight, 1.2, 2.2, DEFAULT_SETTINGS.editorLineHeight),
+    editorContentWidth: boundedNumber(input.editorContentWidth, 560, 1400, DEFAULT_SETTINGS.editorContentWidth),
+    editorTabSize: Math.round(boundedNumber(input.editorTabSize, 2, 8, DEFAULT_SETTINGS.editorTabSize)),
+    editorIndentWithTabs: typeof input.editorIndentWithTabs === 'boolean' ? input.editorIndentWithTabs : DEFAULT_SETTINGS.editorIndentWithTabs,
     autosave: typeof input.autosave === 'boolean' ? input.autosave : DEFAULT_SETTINGS.autosave,
     autosaveDelay: boundedNumber(input.autosaveDelay, 300, 10_000, DEFAULT_SETTINGS.autosaveDelay),
     outlineOpen: typeof input.outlineOpen === 'boolean' ? input.outlineOpen : DEFAULT_SETTINGS.outlineOpen,
@@ -54,8 +84,14 @@ export function createDocument(content = '', name = 'Untitled.md'): DocumentTab 
     bom: false,
     mode: 'edit',
     saveState: content ? 'edited' : 'saved',
+    revision: content ? 1 : 0,
     cursorLine: 1,
     cursorColumn: 1,
+    selectionAnchor: 0,
+    selectionHead: 0,
+    editorScrollTop: 0,
+    editorScrollLeft: 0,
+    readerScrollTop: 0,
   }
 }
 
@@ -66,9 +102,34 @@ export function fromOpenedDocument(document: OpenedDocument): DocumentTab {
     savedContent: document.content,
     mode: 'read',
     saveState: 'saved',
+    revision: 0,
     cursorLine: 1,
     cursorColumn: 1,
+    selectionAnchor: 0,
+    selectionHead: 0,
+    editorScrollTop: 0,
+    editorScrollLeft: 0,
+    readerScrollTop: 0,
   }
+}
+
+export function nextUntitledName(tabs: Pick<DocumentTab, 'name'>[]): string {
+  const names = new Set(tabs.map((tab) => tab.name.toLowerCase()))
+  if (!names.has('untitled.md')) return 'Untitled.md'
+  let index = 2
+  while (names.has(`untitled ${index}.md`)) index += 1
+  return `Untitled ${index}.md`
+}
+
+export function toggleTaskAtLine(content: string, lineIndex: number, checked: boolean): string {
+  if (!Number.isSafeInteger(lineIndex) || lineIndex < 0) return content
+  const lines = content.split('\n')
+  if (lineIndex >= lines.length) return content
+  const nextLine = lines[lineIndex].replace(/^(\s*(?:[-+*]|\d+[.)])\s+\[)([ xX])(\])/, (_match, before, _state, after) =>
+    `${before}${checked ? 'x' : ' '}${after}`)
+  if (nextLine === lines[lineIndex]) return content
+  lines[lineIndex] = nextLine
+  return lines.join('\n')
 }
 
 export function hasUnresolvedChanges(tab: DocumentTab): boolean {
@@ -110,6 +171,65 @@ export function mergeOpenedDocuments(currentTabs: DocumentTab[], openedDocuments
   return { tabs, activeId, conflicts }
 }
 
+export function limitOpenedDocuments(
+  currentTabs: Pick<DocumentTab, 'path' | 'content' | 'savedContent'>[],
+  openedDocuments: OpenedDocument[],
+  limit = MAX_OPEN_TABS,
+  byteLimit = MAX_OPEN_CONTENT_BYTES,
+) {
+  const knownTabs = new Map(currentTabs.flatMap((tab) => tab.path ? [[tab.path, {
+    content: tab.content,
+    savedContent: tab.savedContent,
+  }] as const] : []))
+  let retainedBytes = currentTabs.reduce((total, tab) => total + retainedTextBytes(tab.content, tab.savedContent), 0)
+  let remaining = Math.max(0, limit - currentTabs.length)
+  let dropped = 0
+  let droppedForCount = 0
+  let droppedForBytes = 0
+  const documents: OpenedDocument[] = []
+  for (const document of openedDocuments) {
+    const existing = knownTabs.get(document.path)
+    const openedBytes = utf8ByteLength(document.content)
+    if (existing) {
+      if (existing.content === existing.savedContent) {
+        const refreshedBytes = retainedBytes - retainedTextBytes(existing.content, existing.savedContent) + openedBytes
+        if (refreshedBytes > byteLimit) {
+          dropped += 1
+          droppedForBytes += 1
+          continue
+        }
+        retainedBytes = refreshedBytes
+        knownTabs.set(document.path, { content: document.content, savedContent: document.content })
+      }
+      documents.push(document)
+      continue
+    }
+    if (remaining <= 0) {
+      dropped += 1
+      droppedForCount += 1
+      continue
+    }
+    if (retainedBytes + openedBytes > byteLimit) {
+      dropped += 1
+      droppedForBytes += 1
+      continue
+    }
+    knownTabs.set(document.path, { content: document.content, savedContent: document.content })
+    documents.push(document)
+    remaining -= 1
+    retainedBytes += openedBytes
+  }
+  return { documents, dropped, droppedForCount, droppedForBytes, retainedBytes }
+}
+
+function retainedTextBytes(content: string, savedContent: string) {
+  return utf8ByteLength(content) + (content === savedContent ? 0 : utf8ByteLength(savedContent))
+}
+
+function utf8ByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength
+}
+
 export function reconcileExternalReload(tab: DocumentTab, expectedMtime: number | null, fresh: OpenedDocument) {
   if (tab.path !== fresh.path) return { tab, reloaded: false, conflict: false }
   const changedDuringRead = tab.mtimeMs !== expectedMtime || tab.content !== tab.savedContent
@@ -140,68 +260,55 @@ export function readingMinutes(words: number): number {
   return words === 0 ? 0 : Math.max(1, Math.ceil(words / 220))
 }
 
-export function slugifyHeading(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/<[^>]+>/g, '')
-    .replace(/[`*_~[\](){}]/g, '')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'section'
-}
-
-export function extractOutline(content: string): OutlineItem[] {
-  const items: OutlineItem[] = []
-  const counts = new Map<string, number>()
-  let fenced = false
-  let fenceMarker = ''
-
-  content.split(/\r?\n/).forEach((line, index) => {
-    const fence = line.match(/^\s*(```+|~~~+)/)
-    if (fence) {
-      if (!fenced) {
-        fenced = true
-        fenceMarker = fence[1][0]
-      } else if (fence[1][0] === fenceMarker) {
-        fenced = false
-      }
-      return
-    }
-    if (fenced) return
-    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/)
-    if (!heading) return
-    const text = heading[2].replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[`*_~]/g, '').trim()
-    const base = slugifyHeading(text)
-    const occurrence = counts.get(base) ?? 0
-    counts.set(base, occurrence + 1)
-    items.push({
-      id: occurrence ? `${base}-${occurrence}` : base,
-      text,
-      level: heading[1].length,
-      line: index + 1,
-    })
-  })
-  return items
-}
-
 export function fileStem(name: string): string {
   return name.replace(/\.(?:md|markdown|mdown|mkd|txt)$/i, '') || 'Document'
 }
 
 export function loadSettings(): AppSettings {
   try {
-    return normalizeSettings(JSON.parse(localStorage.getItem('margin:settings') || '{}'))
+    return normalizeSettings(JSON.parse(window.localStorage.getItem('margin:settings') || '{}'))
   } catch {
     return DEFAULT_SETTINGS
   }
 }
 
+export function normalizeStoredTabs(stored: unknown): DocumentTab[] {
+  if (!Array.isArray(stored)) return []
+  return stored.flatMap((value): DocumentTab[] => {
+      if (!value || typeof value !== 'object') return []
+      const tab = value as Partial<DocumentTab>
+      if (typeof tab.id !== 'string' || typeof tab.content !== 'string') return []
+      const savedContent = typeof tab.savedContent === 'string' ? tab.savedContent : ''
+      const mode = tab.mode === 'read' || tab.mode === 'split' || tab.mode === 'live' ? tab.mode : 'edit'
+      const saveState = ['saved', 'edited', 'saving', 'conflict', 'error'].includes(String(tab.saveState))
+        ? tab.saveState as DocumentTab['saveState']
+        : tab.content === savedContent ? 'saved' : 'edited'
+      return [{
+        id: tab.id,
+        path: typeof tab.path === 'string' ? tab.path : null,
+        name: typeof tab.name === 'string' ? tab.name : 'Untitled.md',
+        content: tab.content,
+        savedContent,
+        mtimeMs: typeof tab.mtimeMs === 'number' && Number.isFinite(tab.mtimeMs) ? tab.mtimeMs : null,
+        lineEnding: tab.lineEnding === 'crlf' ? 'crlf' : 'lf',
+        bom: Boolean(tab.bom),
+        mode,
+        saveState,
+        revision: Number.isSafeInteger(tab.revision) && Number(tab.revision) >= 0 ? Number(tab.revision) : tab.content === savedContent ? 0 : 1,
+        cursorLine: typeof tab.cursorLine === 'number' && Number.isFinite(tab.cursorLine) ? Math.max(1, tab.cursorLine) : 1,
+        cursorColumn: typeof tab.cursorColumn === 'number' && Number.isFinite(tab.cursorColumn) ? Math.max(1, tab.cursorColumn) : 1,
+        selectionAnchor: typeof tab.selectionAnchor === 'number' && Number.isFinite(tab.selectionAnchor) ? Math.max(0, tab.selectionAnchor) : 0,
+        selectionHead: typeof tab.selectionHead === 'number' && Number.isFinite(tab.selectionHead) ? Math.max(0, tab.selectionHead) : 0,
+        editorScrollTop: typeof tab.editorScrollTop === 'number' && Number.isFinite(tab.editorScrollTop) ? Math.max(0, tab.editorScrollTop) : 0,
+        editorScrollLeft: typeof tab.editorScrollLeft === 'number' && Number.isFinite(tab.editorScrollLeft) ? Math.max(0, tab.editorScrollLeft) : 0,
+        readerScrollTop: typeof tab.readerScrollTop === 'number' && Number.isFinite(tab.readerScrollTop) ? Math.max(0, tab.readerScrollTop) : 0,
+      }]
+    }).slice(0, MAX_OPEN_TABS)
+}
+
 export function restoreSession(): DocumentTab[] {
   try {
-    const tabs = JSON.parse(localStorage.getItem('margin:session') || '[]') as DocumentTab[]
-    return tabs.filter((tab) => tab && typeof tab.content === 'string' && typeof tab.id === 'string').slice(0, 20)
+    return normalizeStoredTabs(JSON.parse(window.localStorage.getItem('margin:session') || '[]'))
   } catch {
     return []
   }
