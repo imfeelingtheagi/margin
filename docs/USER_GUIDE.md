@@ -47,6 +47,7 @@ From left to right:
 - **Left sidebar:** Files, folder Search, and the current document's Outline. The Files view also lists open documents.
 - **Center:** the active document. The top toolbar selects Read/Edit/Live/Split. Tabs below the toolbar switch documents.
 - **Right Reading desk:** Reading, Links, and Tags. Open it with the book icon or `Cmd/Ctrl+Shift+L`.
+- **Optional Agent desk:** the robot icon opens local-helper setup in the same right-hand area, replacing the Reading desk while open. It starts disabled; opening setup does not load a model. See the [Agent desk guide](AGENT_DESK.md) before configuring it.
 - **Bottom status bar:** save status, path, cursor information in editing modes, word count, and estimated reading time. Editing modes also expose word-wrap and indentation controls.
 
 Use `Cmd/Ctrl+Shift+P` for the command palette when you cannot find an action. Toolbar buttons have descriptive tooltips. `F8` hides surrounding chrome for Focus Mode; press it again to return. Focus Mode and sentence/paragraph writing focus are separate settings.

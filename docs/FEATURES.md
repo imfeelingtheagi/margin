@@ -17,7 +17,7 @@ The product remains a cross-platform, offline desktop Markdown reader/editor. Ma
 | Personal reading tools | File bookmarks, text highlights, editable notes, highlight colors, quote-based anchors that can relocate after text edits |
 | Images | Relative local assets, image paste/drop/picker, transcluded-note assets, fit/zoom/previous/next viewer |
 | Presentation | Heading/separator-based slides, one slide rendered at a time, keyboard navigation, math/diagrams/embeds |
-| Export | Self-contained HTML/PDF with local images, fonts, math, diagrams, and embedded note content; wiki links become file links |
+| Export | Self-contained HTML/PDF with local images, embedded math fonts, math, diagrams, and note content; body text uses system fonts and wiki links become file links |
 | Persistence | Atomic document writes, save conflict detection, autosave, external reload checks, crash recovery, persistent reading metadata |
 | Optional Agent desk | Local-only Ollama, explicit context, cited answers, reviewed single-document edits/drafts, cancellation, guarded undo; no model bundled/downloaded |
 | Privacy | No accounts, telemetry, hosted AI/cloud fallback, dictionary downloads, or background web requests; the optional desk uses explicit loopback requests |
@@ -28,7 +28,7 @@ The existing CodeMirror editor owns the Markdown text in every editing mode. Liv
 
 Connected notes are indexed only inside an explicitly selected folder and from open documents. Exact paths are preferred, short names require a unique match, and unresolved/ambiguous links are not silently redirected. Code fences and inline code do not generate note links or tags. Filesystem operations use the existing path capability checks and never follow workspace symlinks. Creating a missing note uses an exclusive write and cannot overwrite an existing file.
 
-The graph uses native SVG with a bounded static layout. Presentation and reading panels are separate lazy-loaded chunks. There is no graph library, rich-text framework, database server, plugin runtime, or indexing daemon.
+The note graph uses native SVG with a bounded static layout and adds no graph-library dependency or continuous simulation. Presentation, reading, and Agent desk panels are separate lazy-loaded chunks. There is no rich-text framework, database server, plugin runtime, or indexing daemon. Existing rendering libraries such as Mermaid keep their own bundled dependencies.
 
 Highlights use quoted text plus surrounding context to find their location after edits. If the text no longer exists, the annotation remains in the Reading desk and jumping to it reports that the text changed. Editing annotations never modifies the source document.
 
@@ -41,3 +41,5 @@ Automated tests cover document integrity, rendering and sanitization, filesystem
 `npm run test:desktop` exercises the real Electron app in an isolated temporary profile: folder/file opening, note navigation, reference/footnote-aware embeds, bookmarks, cross-paragraph annotations without source changes, folding, image zoom, slides, live editing/undo/focus, YAML tags, missing-note creation/completion, graph navigation, persistence after reload and full restart, and offline network behavior. It verifies scrolling immediately before a tab closes, rather than waiting for a persistence debounce.
 
 Production builds and native app packaging are checked separately. `scripts/Dockerfile.smoke` provides a repeatable Linux environment; `.github/workflows/desktop.yml` runs the same tests and unpacked app packaging on macOS, Windows, and Linux when published. The Linux container disables Chromium's OS sandbox for its isolated test processes; the production application retains its sandbox configuration. Native Windows validation requires the Windows job or a Windows development machine.
+
+The Agent desk's protocol fixture exercises native UI/IPC/file integration without model weights. This is not real-model inference or quality validation; that testing remains deferred at the user's request. The [Agent desk guide](AGENT_DESK.md#verification-status) records this distinction explicitly. Documentation screenshots keep the feature disabled and do not connect to Ollama.

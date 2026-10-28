@@ -4,7 +4,7 @@ Margin is a local-first Markdown reader and editor. Your documents are ordinary 
 
 ![Margin in Read mode with a folder workspace, highlights, and the Reading desk](assets/reading.png)
 
-The toolbar changes views, the left sidebar navigates files, and the right Reading desk keeps personal reading notes separate from the document.
+The toolbar changes views, the left sidebar navigates files, and the right Reading desk keeps personal reading notes separate from the document. The robot button switches that right-hand area to the optional Agent desk; it starts disabled and ordinary reading/editing does not require it.
 
 ## Choose a guide
 

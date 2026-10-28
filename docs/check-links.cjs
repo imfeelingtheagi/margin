@@ -1,6 +1,7 @@
 // Offline documentation QA: no link crawling and no writes to the app profile.
 const fs = require('node:fs/promises')
 const path = require('node:path')
+const { createHash } = require('node:crypto')
 const MarkdownIt = require('markdown-it')
 const anchorModule = require('markdown-it-anchor')
 const anchor = anchorModule.default || anchorModule
@@ -57,12 +58,31 @@ async function check() {
     }
   }
   const dimensions = []
+  let manifest = null
+  try {
+    manifest = JSON.parse(await fs.readFile(path.join(__dirname, 'assets', 'capture-manifest.json'), 'utf8'))
+    if (manifest.formatVersion !== 1 || !manifest.captures || typeof manifest.captures !== 'object') throw new Error('Unsupported capture metadata')
+  } catch (error) { problems.push(`docs/assets/capture-manifest.json: ${error.message}`) }
+  const rendererBuilds = new Set()
   for (const file of images) {
     if (path.extname(file).toLowerCase() !== '.png') continue
     const data = await fs.readFile(file)
     if (data.length < 24 || data.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') problems.push(`${file}: invalid PNG`)
-    else dimensions.push({ file: path.relative(root, file), width: data.readUInt32BE(16), height: data.readUInt32BE(20), kib: Math.round(data.length / 1024) })
+    else {
+      const width = data.readUInt32BE(16), height = data.readUInt32BE(20)
+      dimensions.push({ file: path.relative(root, file), width, height, kib: Math.round(data.length / 1024) })
+      const record = manifest?.captures?.[path.basename(file, '.png')]
+      if (!record) problems.push(`${path.relative(root, file)}: missing capture metadata`)
+      else {
+        if (record.sha256 !== createHash('sha256').update(data).digest('hex')) problems.push(`${path.relative(root, file)}: screenshot checksum differs from the capture manifest`)
+        if (record.width !== width || record.height !== height) problems.push(`${path.relative(root, file)}: capture dimensions differ`)
+        if (record.networkRequests !== 0) problems.push(`${path.relative(root, file)}: capture did not confirm zero network requests`)
+        if (!/^[a-f\d]{64}$/.test(record.rendererEntrySha256 || '')) problems.push(`${path.relative(root, file)}: invalid renderer fingerprint`)
+        else rendererBuilds.add(record.rendererEntrySha256)
+      }
+    }
   }
+  if (rendererBuilds.size > 1) problems.push('Documentation screenshots come from different renderer builds; refresh the full set.')
   console.log(JSON.stringify({ files: files.length, localLinks: links, mermaidDiagrams: diagrams, images: dimensions, problems }, null, 2))
   if (problems.length) process.exitCode = 1
 }

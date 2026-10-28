@@ -4,7 +4,7 @@ Margin is a calm, local-first Markdown reader and editor for macOS, Windows, and
 
 ## Documentation
 
-Start with the [illustrated user guide](docs/USER_GUIDE.md) for reading, editing, linked notes, annotations, and export. The [documentation hub](docs/README.md) also links to the [architecture](docs/ARCHITECTURE.md), [data/security and backup reference](docs/DATA_AND_SECURITY.md), and [development/testing guide](docs/DEVELOPMENT.md).
+Start with the [illustrated user guide](docs/USER_GUIDE.md) for reading, editing, linked notes, annotations, and export, or the [Agent desk guide](docs/AGENT_DESK.md) for the optional local helper. The [documentation hub](docs/README.md) also links to the [architecture](docs/ARCHITECTURE.md), [data/security and backup reference](docs/DATA_AND_SECURITY.md), and [development/testing guide](docs/DEVELOPMENT.md).
 
 ![Margin with a local notebook, a highlight, and the Reading desk](docs/assets/reading.png)
 
@@ -159,6 +159,8 @@ Bookmarks, highlights, notes, collapsed sections, and reading positions persist 
 ## Security and privacy
 
 The Electron renderer runs with context isolation, sandboxing, a narrow preload API, and no Node.js integration. The desktop session blocks web requests and direct file requests outside packaged app assets, with an exact-file exception for each temporary PDF render window; development mode permits only the configured local Vite server. File and folder access is brokered by the main process and limited to files the user selected, the chosen workspace root, safe relative document links, and each document's local asset directory.
+
+The optional Agent desk uses a separate main-process transport restricted to local Ollama at `127.0.0.1:11434`. It starts disabled, verifies cloud features are off before sending document text, and provides no model-download or cloud-fallback operation. Its local requests do not relax the renderer's network policy. See the [Agent desk's setup, permissions, and current testing limits](docs/AGENT_DESK.md).
 
 Markdown HTML and generated Mermaid SVG are sanitized before display. Remote and absolute image paths are blocked; relative images must remain inside the opened document's directory. Exported HTML uses a restrictive Content Security Policy and embeds its styles and math fonts.
 

@@ -43,21 +43,27 @@ electron/
   workspace.cjs            Bounded traversal, path policy, search/snapshots
   external-open.cjs        OS/CLI open coordination
   network-policy.cjs       App-session resource request policy
+  agent-host.cjs           Agent context permissions, settings, restore points
+  agent.cjs                Fixed local transport and bounded read/proposal loop
 src/
   App.tsx                  UI/application coordination
   types.ts                 Document, settings, workspace, bridge contracts
+  agentTypes.ts            Agent settings, context, events, proposal contracts
   components/              Editor, reader, sidebar, graph, panels, overlays
   lib/                     Markdown, live widgets, links/index, reading state
   styles.css               Core application styles
   features.css             Workspace/reading/connected-note surfaces
+  agent.css                Lazy-loaded Agent desk styling
   test/setup.ts            Shared Vitest environment setup
 scripts/
   desktop-smoke.cjs         Real Electron regression workflow
+  agent-smoke.cjs           Deterministic protocol fixture; no real inference
   Dockerfile.smoke          Repeatable Linux checks
 docs/
   examples/                Small, portable demonstration notebook
   assets/                  Real screenshots, no user profile data
   capture-screenshots.cjs   Documentation-only screenshot tool
+  check-links.cjs           Offline links, anchors, image/capture validation
 build/                     App icon source/generated platform icons
 dist/                      Generated renderer output; ignored by Git
 release/                   Generated packages/unpacked apps; ignored by Git
@@ -172,16 +178,16 @@ Public distribution still needs platform signing/notarization and release creden
 
 The documentation is regular Markdown with local PNG assets and Mermaid diagrams. No hosted font/image/CDN is needed to view it in Margin. GitHub can render its Mermaid blocks too; a viewer without Mermaid support will show the readable diagram source.
 
-To regenerate the five screenshots after rebuilding:
+To regenerate all six screenshots, including the disabled Agent desk, after rebuilding:
 
 ```sh
 npm run build
 node docs/capture-screenshots.cjs
 ```
 
-Or set `MARGIN_SMOKE_EXECUTABLE` as in the packaged smoke example to capture the actual packaged app. The script copies `docs/examples` into temporary fixtures, asserts profile isolation, and writes only the intended documentation screenshots. Check them visually before committing. It may need local desktop-launch permission in restricted automation environments.
+Or set `MARGIN_SMOKE_EXECUTABLE` as in the packaged smoke example to capture the actual packaged app. The script copies `docs/examples` into temporary fixtures, asserts profile isolation and disabled Agent settings, and blocks Node HTTP/fetch requests in that disposable process. It writes the six screenshots plus [capture metadata](assets/capture-manifest.json), recording each image's checksum, actual renderer-entry checksum, app/platform version, capture time, and repository revision. No Ollama connection, model, or inference is needed. Check the images visually before committing. Desktop-launch permission may be needed in restricted environments.
 
-`node docs/check-links.cjs` validates relative documentation links, image paths, local anchors, and referenced assets without fetching the internet. It also checks that screenshot files are PNGs and reports their dimensions.
+`node docs/check-links.cjs` validates relative documentation links, image paths, local anchors, and referenced assets without fetching the internet. It checks PNG dimensions/checksums against the capture manifest and flags screenshots from mixed renderer builds. The manifest records the checked-out revision separately from the renderer checksum; it does not by itself prove that a binary was built from that revision.
 
 ## A safe change workflow
 
