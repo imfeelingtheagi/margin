@@ -337,14 +337,13 @@ async function readDocument(filePath, { register = true } = {}) {
 
 async function atomicWrite(filePath, content) {
   const directory = path.dirname(filePath)
-  const tempPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`)
+  const tempPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`)
   const existing = await fs.stat(filePath).catch(() => null)
-  await fs.writeFile(tempPath, content, { encoding: 'utf8', mode: existing ? existing.mode & 0o777 : 0o600 })
   try {
+    await fs.writeFile(tempPath, content, { encoding: 'utf8', flag: 'wx', mode: existing ? existing.mode & 0o777 : 0o600 })
     await fs.rename(tempPath, filePath)
-  } catch (error) {
+  } finally {
     await fs.unlink(tempPath).catch(() => {})
-    throw error
   }
 }
 
@@ -1168,8 +1167,10 @@ async function registerIpc() {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const filePath = await chooseSavePath(parent, null, suggestedName, 'html')
     if (!filePath) return { status: 'cancelled' }
-    const targetPath = path.resolve(filePath)
+    const targetPath = await canonicalize(filePath)
+    assertSaveTargetAvailable(event.sender, targetPath, null)
     await assertWritableFileTarget(targetPath)
+    assertSaveTargetAvailable(event.sender, targetPath, null)
     await atomicWrite(targetPath, html)
     return { status: 'saved', path: targetPath }
   })
@@ -1178,7 +1179,8 @@ async function registerIpc() {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const filePath = await chooseSavePath(parent, null, suggestedName, 'pdf')
     if (!filePath) return { status: 'cancelled' }
-    const targetPath = path.resolve(filePath)
+    const targetPath = await canonicalize(filePath)
+    assertSaveTargetAvailable(event.sender, targetPath, null)
     await assertWritableFileTarget(targetPath)
     const exportDirectory = await fs.mkdtemp(path.join(app.getPath('temp'), 'margin-export-'))
     const exportHtmlPath = path.join(exportDirectory, 'document.html')
@@ -1198,6 +1200,7 @@ async function registerIpc() {
         margins: { top: 0.55, bottom: 0.55, left: 0.6, right: 0.6 },
         preferCSSPageSize: true,
       })
+      assertSaveTargetAvailable(event.sender, targetPath, null)
       await atomicWrite(targetPath, pdf)
       return { status: 'saved', path: targetPath }
     } finally {

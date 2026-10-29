@@ -92,6 +92,7 @@ export function CommandPalette({
           }}
           placeholder={placeholder}
           role="combobox"
+          aria-label={label}
           aria-expanded="true"
           aria-autocomplete="list"
           aria-controls="command-palette-results"

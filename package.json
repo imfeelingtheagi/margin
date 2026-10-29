@@ -21,6 +21,8 @@
     "start": "electron .",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
+    "test:reader": "vitest run --exclude **/agent*.test.ts",
+    "test:reader:desktop": "npm run build && node scripts/reader-qa.cjs",
     "test:desktop": "npm run build && node scripts/desktop-smoke.cjs",
     "test:agent": "npm run build && node scripts/agent-smoke.cjs",
     "test:watch": "vitest",

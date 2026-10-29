@@ -129,7 +129,7 @@ The Markdown syntax `==marked text==` is different: it is part of the document a
 - Click a heading's chevron to hide its section until the next heading of equal or higher level. The command palette also has expand/collapse-all actions. Collapsed heading IDs are saved with reading metadata.
 - Click a rendered local image to open the image viewer. `+`/`-` zoom, `0` fits, arrow keys change images, and `Esc` closes. Scroll the enlarged image to pan.
 - Press `F5` or choose Present Document. Level 1/2 headings and horizontal rules split slides, except inside code blocks. Right/Down/PageDown/Space advances; Left/Up/PageUp goes back; Home/End jumps to the first/last slide; `Esc` exits. This is a local presentation view, not a slide-file exporter.
-- Task checkboxes in the normal rendered document are editable: toggling one changes the Markdown and participates in saving. Presentation/export checkboxes are read-only.
+- Task checkboxes in the normal rendered document are editable, including quoted tasks: toggling one changes the Markdown and participates in saving. Each toggle has its own undo step, even before visiting Edit mode. Presentation/export checkboxes are read-only.
 
 ## 6. Write and save safely
 
@@ -142,6 +142,8 @@ Writing Settings include line numbers, code folding, visible whitespace, font/si
 ### Autosave versus Save
 
 Autosave is on by default, with a 1.2-second delay after editing stops. It applies only to files that already have a saved path. **Save** (`Cmd/Ctrl+S`) chooses a path for a draft; **Save As** chooses a different target. Existing files are replaced with a same-directory temporary-file-and-rename operation, not edited in place a fragment at a time.
+
+If you type while a close-and-save is still finishing, Margin keeps the tab/window open when newer unsaved text remains. Save again before closing. A preferences-storage warning does not stop editing; settings stay usable for the current session but might not survive a restart.
 
 Read the save indicator. Edited/saving/conflict/error are not equivalent to saved. If a file changes externally while you have edits, autosave pauses and the next manual Save asks whether to overwrite, save a copy, or cancel. Prefer **Save a Copy** when you need to keep both versions. If an unchanged open file is edited by another app, Margin checks on focus and periodically and can reload it automatically. This is conflict detection, not a merge editor or version history.
 
@@ -233,6 +235,8 @@ Remote images, absolute filesystem images, and `../` images escaping the note's 
 ## 9. Export and share
 
 Use **File → Export as HTML** or **Export as PDF**. Exports use the current buffer, including edits not yet saved to the source file. They contain a freshly rendered document, not a screenshot of the window.
+
+Choose a separate output file: Margin refuses to export over a document currently open in the window. Local heading and footnote links remain within the rendered document, including embedded note sections.
 
 - HTML bundles styles, supported local images, math fonts, rendered diagrams, and expanded note content. Body fonts use system fallbacks; they are not downloaded or bundled as a custom font family.
 - PDF is generated locally through Electron's print engine, using an A4 page and print styles. Foldable callouts expand for PDF output. It is not a print-dialog/settings UI.

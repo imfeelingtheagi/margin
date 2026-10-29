@@ -14,6 +14,9 @@ export function enhanceNotes(container: HTMLElement, index: NoteIndex, fromPath:
     if (anchor.closest('[data-margin-expanded]')) continue
     const wiki = anchor.dataset.marginNote
     const href = anchor.getAttribute('href') || ''
+    // Local anchors (including generated footnote return links) belong to this
+    // rendered article. Reclassifying them as note links breaks embeds/exports.
+    if (wiki == null && href.startsWith('#')) continue
     if (wiki == null && /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href)) continue
     const resolved = resolveNote(index, wiki ?? href, fromPath, wiki != null)
     if (wiki != null || resolved) {

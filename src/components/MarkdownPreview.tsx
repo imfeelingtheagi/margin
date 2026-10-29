@@ -128,6 +128,16 @@ export const MarkdownPreview = memo(function MarkdownPreview({
   }, [active, findQuery, html, tab.id])
 
   useEffect(() => {
+    const container = containerRef.current
+    if (!active || !container) return
+    const update = () => { if (findQueryRef.current) refreshFind(findQueryRef.current, findIndexRef.current) }
+    // details.toggle does not bubble; capture it so opening/closing a callout
+    // updates visible search matches without requiring the query to change.
+    container.addEventListener('toggle', update, true)
+    return () => container.removeEventListener('toggle', update, true)
+  }, [active, tab.id])
+
+  useEffect(() => {
     if (!active || !findNavigation || !findQuery) return
     refreshFind(findQuery, findIndexRef.current + findNavigation.direction)
   }, [active, findNavigation?.sequence])

@@ -57,4 +57,16 @@ describe('MarkdownPreview', () => {
     fireEvent.click(checkbox)
     expect(onToggleTask).not.toHaveBeenCalled()
   })
+
+  it('refreshes find results when a closed callout is opened', async () => {
+    const tab = { ...createDocument('> [!note]- Details\n> Hidden needle.'), mode: 'read' as const }
+    const onFindStatus = vi.fn()
+    render(<MarkdownPreview tab={tab} active settings={DEFAULT_SETTINGS} findQuery="needle" onFindStatus={onFindStatus} />)
+    await vi.waitFor(() => expect(onFindStatus).toHaveBeenLastCalledWith(0, 0))
+    const callout = document.querySelector<HTMLDetailsElement>('details.markdown-callout')!
+    callout.open = true
+    fireEvent(callout, new Event('toggle'))
+    expect(document.querySelector('mark[data-margin-reader-find]')).toHaveTextContent('needle')
+    expect(onFindStatus).toHaveBeenLastCalledWith(1, 1)
+  })
 })

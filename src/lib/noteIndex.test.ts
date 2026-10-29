@@ -36,6 +36,22 @@ describe('connected notes', () => {
     expect(element.querySelector('.note-embed-body .footnotes strong')).toHaveTextContent('useful')
     expect(element.querySelector('.note-embed-body')?.textContent).not.toContain('Not embedded.')
   })
+  it('keeps local heading and footnote links inside the rendered document, including embeds and exports', async () => {
+    const content = '# Guide\n\n[Details](#details) and footnote[^one].\n\n## Details\n\nBody.\n\n[^one]: A local footnote.'
+    const notes = buildNoteIndex([{ relativePath: 'Guide.md', content }, { relativePath: 'Host.md', content: '![[Guide]]' }])
+    const element = document.createElement('article')
+    element.innerHTML = renderMarkdown(content)
+    enhanceNotes(element, notes, 'Guide.md')
+    expect(element.querySelector('a[href="#details"]')).not.toHaveAttribute('data-margin-note')
+    expect(element.querySelector('.footnote-ref a')).not.toHaveAttribute('data-margin-note')
+    element.innerHTML = renderMarkdown('![[Guide]]')
+    enhanceNotes(element, notes, 'Host.md')
+    const footnote = element.querySelector<HTMLAnchorElement>('.footnote-ref a')!
+    expect(footnote).not.toHaveAttribute('data-margin-note')
+    expect(element.querySelector(footnote.getAttribute('href')!)).not.toBeNull()
+    const html = await createExportHtml('![[Guide]]', null, 'Host', DEFAULT_SETTINGS, { index: notes, relativePath: 'Host.md', assetDocumentPath: () => null })
+    expect(html).not.toMatch(/href="Guide\.md#(?:fn|details)/)
+  })
   it('bounds connection metadata and restores excluded links when index capacity becomes available', () => {
     const sources = Array.from({ length: 120 }, (_, i) => ({ relativePath: `Note${i}.md`, content: `# Note ${i}\n\n${'[[Note0]] '.repeat(350)}` }))
     const bounded = buildNoteIndex(sources)

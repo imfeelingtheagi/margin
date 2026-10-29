@@ -14,8 +14,8 @@ import { WorkspaceSidebar, type SidebarView } from './components/WorkspaceSideba
 import {
   countWords, createDocument, fileStem, hasUnresolvedChanges, limitOpenedDocuments, loadSettings,
   MAX_OPEN_CONTENT_BYTES, MAX_OPEN_TABS, mergeOpenedDocuments, nextUntitledName, readingMinutes, reconcileExternalReload,
-  toggleTaskAtLine,
 } from './lib/document'
+import { toggleEditorTask } from './lib/editorTasks'
 import { createExportHtml, extractOutline } from './lib/markdown'
 import { formatMarkdownTableAt } from './lib/markdownTable'
 import { buildNoteIndex, normalizeNotePath, resolveNote, type NoteIndex } from './lib/noteIndex'
@@ -70,6 +70,7 @@ export default function App() {
   const readingLibraryRef = useRef(readingLibrary)
   const readingUiTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const readingStorageWarning = useRef(false)
+  const preferenceStorageWarnings = useRef(new Set<string>())
   const [readingToolsOpen, setReadingToolsOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
   const [agentSelection, setAgentSelection] = useState<AgentSelection | null>(null)
@@ -112,6 +113,8 @@ export default function App() {
   const closedTabsRef = useRef<DocumentTab[]>([])
   const scrollSyncSource = useRef<'editor' | 'reader' | null>(null)
   const editorViews = useRef(new Map<string, EditorView>())
+  const pendingPreviewTasks = useRef(new Map<string, Array<{ line: number; checked: boolean }>>())
+  const [previewEditorIds, setPreviewEditorIds] = useState<Set<string>>(() => new Set())
   const pendingAgentEdits = useRef(new Map<string, { expected: string; path: string | null; from: number; to: number; insert: string; resolve: () => void; reject: (error: Error) => void }>())
   const pendingEditorFind = useRef(new Set<string>())
   const pendingEditorFormat = useRef(new Map<string, FormatAction | string>())
@@ -219,6 +222,17 @@ export default function App() {
     setToasts((current) => [...current.slice(-2), { id, message, tone }])
     window.setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), 3200)
   }, [])
+
+  const persistPreference = useCallback((key: string, value: string | null) => {
+    try {
+      if (value == null) localStorage.removeItem(key)
+      else localStorage.setItem(key, value)
+      preferenceStorageWarnings.current.delete(key)
+    } catch {
+      if (!preferenceStorageWarnings.current.has(key)) showToast('Preferences could not be stored. You can keep working; changes may not survive a restart.', 'error')
+      preferenceStorageWarnings.current.add(key)
+    }
+  }, [showToast])
 
   const updateReading = useCallback((id: string, patch: Partial<ReadingRecord> | ((record: ReadingRecord) => Partial<ReadingRecord>)) => {
     const tab = tabsRef.current.find((tab) => tab.id === id)
@@ -694,6 +708,12 @@ export default function App() {
         setSaveScheduleEpoch((value) => value + 1)
         return false
       }
+      if (choice === 'save' && tabsRef.current.some((candidate) => candidate.id === id && hasUnresolvedChanges(candidate))) {
+        closingTabsRef.current.delete(id)
+        setSaveScheduleEpoch((value) => value + 1)
+        showToast('Newer edits arrived while saving. The tab remains open.', 'error')
+        return false
+      }
       discarded = choice === 'discard'
     }
     const current = tabsRef.current
@@ -704,6 +724,8 @@ export default function App() {
     tabsRef.current = next
     setTabs(next)
     editorViews.current.delete(id)
+    pendingPreviewTasks.current.delete(id)
+    setPreviewEditorIds((current) => { const next = new Set(current); next.delete(id); return next })
     closingTabsRef.current.delete(id)
     const nextActiveId = next[Math.min(index, next.length - 1)]?.id ?? null
     setActiveId((currentActiveId) => currentActiveId === id ? nextActiveId : currentActiveId)
@@ -751,6 +773,15 @@ export default function App() {
       showToast('Reading notes could not be saved. Free local storage or remove older annotations before quitting.', 'error')
       return
     }
+    const discarded = new Map<string, string>()
+    const cancelForNewerEdits = () => {
+      if (!tabsRef.current.some((tab) => hasUnresolvedChanges(tab) && discarded.get(tab.id) !== tab.content)) return false
+      closingRef.current = false
+      window.margin.cancelWindowClose()
+      setSaveScheduleEpoch((value) => value + 1)
+      showToast('Newer edits arrived while saving. Margin remains open.', 'error')
+      return true
+    }
     for (const tab of [...tabsRef.current]) {
       await documentSaveQueues.current.get(tab.id)?.catch(() => false)
       const latest = tabsRef.current.find((candidate) => candidate.id === tab.id)
@@ -768,7 +799,9 @@ export default function App() {
         setSaveScheduleEpoch((value) => value + 1)
         return
       }
+      if (choice === 'discard') discarded.set(latest.id, latest.content)
     }
+    if (cancelForNewerEdits()) return
     if (recoveryWritableRef.current) {
       try {
         await window.margin.clearSession()
@@ -779,8 +812,12 @@ export default function App() {
         return
       }
     }
+    if (cancelForNewerEdits()) {
+      if (recoveryWritableRef.current) void saveRecoverySnapshot(tabsRef.current).catch(() => showToast('The local recovery backup could not be updated.', 'error'))
+      return
+    }
     window.margin.closeWindow()
-  }, [saveDocument, showToast])
+  }, [saveDocument, saveRecoverySnapshot, showToast])
 
   const setMode = useCallback((mode: DocumentMode) => {
     const id = activeId
@@ -845,26 +882,14 @@ export default function App() {
 
   const togglePreviewTask = useCallback((id: string, sourceLine: number, checked: boolean) => {
     const view = editorViews.current.get(id)
-    if (view && sourceLine >= 0 && sourceLine < view.state.doc.lines) {
-      const line = view.state.doc.line(sourceLine + 1)
-      const match = line.text.match(/^(\s*(?:[-+*]|\d+[.)])\s+\[)([ xX])(\])/)
-      if (match) {
-        const marker = line.from + match[1].length
-        if (view.state.sliceDoc(marker, marker + 1).toLowerCase() !== (checked ? 'x' : ' ')) {
-          view.dispatch({ changes: { from: marker, to: marker + 1, insert: checked ? 'x' : ' ' } })
-        }
-        return
-      }
-    }
-    updateTab(id, (tab) => {
-      const content = toggleTaskAtLine(tab.content, sourceLine, checked)
-      return content === tab.content ? {} : {
-        content,
-        revision: tab.revision + 1,
-        saveState: tab.saveState === 'conflict' ? 'conflict' : content === tab.savedContent ? 'saved' : 'edited',
-      }
-    })
-  }, [updateTab])
+    if (view) { toggleEditorTask(view, sourceLine, checked); return }
+    // Lazily initialize a hidden source editor before changing a read-only
+    // tab, so its very first checkbox edit also has a real undo transaction.
+    const pending = pendingPreviewTasks.current.get(id) || []
+    pending.push({ line: sourceLine, checked })
+    pendingPreviewTasks.current.set(id, pending)
+    setPreviewEditorIds((current) => new Set([...current, id]))
+  }, [])
 
   const copyCode = useCallback((code: string) => {
     void window.margin.copyText(code).then((copied) => showToast(copied ? 'Code copied.' : 'This code block is too large to copy.', copied ? 'success' : 'error')).catch(() => showToast('Code could not be copied.', 'error'))
@@ -878,6 +903,9 @@ export default function App() {
 
   const registerEditor = useCallback((id: string, view: EditorView) => {
     editorViews.current.set(id, view)
+    const tasks = pendingPreviewTasks.current.get(id)
+    pendingPreviewTasks.current.delete(id)
+    for (const task of tasks || []) toggleEditorTask(view, task.line, task.checked)
     const agentEdit = pendingAgentEdits.current.get(id)
     if (agentEdit) {
       pendingAgentEdits.current.delete(id)
@@ -1215,7 +1243,8 @@ export default function App() {
       if (tabsRef.current.length) return
       tabsRef.current = restored
       setTabs(restored)
-      const preferredId = localStorage.getItem('margin:active-tab')
+      let preferredId: string | null = null
+      try { preferredId = localStorage.getItem('margin:active-tab') } catch { /* Preferences must not disable native crash recovery. */ }
       setActiveId(restored.find((tab) => tab.id === preferredId)?.id ?? restored[0]?.id ?? null)
     }).catch((error) => {
       recoveryWritableRef.current = false
@@ -1330,20 +1359,20 @@ export default function App() {
   }, [showToast, updateTab])
 
   useEffect(() => {
-    localStorage.setItem('margin:settings', JSON.stringify(settings))
     document.documentElement.dataset.uiTheme = darkInterface ? 'dark' : 'light'
+    persistPreference('margin:settings', JSON.stringify(settings))
     window.margin.setViewOptions({
       wordWrap: settings.editorWordWrap,
       lineNumbers: settings.editorLineNumbers,
       typewriterMode: settings.editorTypewriterMode,
       showWhitespace: settings.editorShowWhitespace,
     })
-  }, [darkInterface, settings])
+  }, [darkInterface, persistPreference, settings])
 
   useEffect(() => {
-    if (activeId) localStorage.setItem('margin:active-tab', activeId)
-    else localStorage.removeItem('margin:active-tab')
-  }, [activeId])
+    if (!sessionReady) return
+    persistPreference('margin:active-tab', activeId)
+  }, [activeId, persistPreference, sessionReady])
 
   useEffect(() => {
     window.margin.setDirty(tabs.some(hasUnresolvedChanges))
@@ -1566,7 +1595,7 @@ export default function App() {
           {!activeTab ? <Welcome onNew={newDocument} onOpen={() => void openDocuments()} onOpenWorkspace={() => void openWorkspace()} /> : (
             <div className={`document-stack mode-${activeTab.mode}`}>
               {tabs.map((tab) => (
-                (tab.mode !== 'read' || editorViews.current.has(tab.id)) && (
+                (tab.mode !== 'read' || editorViews.current.has(tab.id) || previewEditorIds.has(tab.id)) && (
                   <Suspense key={tab.id} fallback={<div className="editor-loading" role="status">Opening editor…</div>}>
                     <EditorPane
                       tab={tab}
@@ -1669,6 +1698,7 @@ export default function App() {
               setReaderFindNavigation((value) => ({ sequence: value.sequence + 1, direction: event.shiftKey ? -1 : 1 }))
             }}
             placeholder="Find in document"
+            aria-label="Find in document"
             autoFocus
           />
           <span className="reader-find-status" aria-live="polite">{readerFindStatus.current}/{readerFindStatus.total}</span>

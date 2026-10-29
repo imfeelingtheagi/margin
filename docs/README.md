@@ -16,6 +16,7 @@ The toolbar changes views, the left sidebar navigates files, and the right Readi
 | Find my data, back it up, or understand file/network access | [Data and security](DATA_AND_SECURITY.md) |
 | Build, test, package, or extend the app | [Development](DEVELOPMENT.md) |
 | Check benchmark coverage and deliberate exclusions | [Feature coverage](FEATURES.md) |
+| Review non-AI QA, fixes, and remaining validation limits | [QA report](QA_REPORT.md) |
 | Try the features with a small connected notebook | Open this documentation's [examples](examples/Welcome.md) folder in Margin |
 
 ## The short version

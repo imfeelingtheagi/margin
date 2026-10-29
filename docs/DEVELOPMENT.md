@@ -57,6 +57,7 @@ src/
   test/setup.ts            Shared Vitest environment setup
 scripts/
   desktop-smoke.cjs         Real Electron regression workflow
+  reader-qa.cjs             Extended non-AI file/rendering/failure regressions
   agent-smoke.cjs           Deterministic protocol fixture; no real inference
   Dockerfile.smoke          Repeatable Linux checks
 docs/
@@ -77,6 +78,8 @@ Renderer TypeScript uses ES modules. Native Electron and supporting scripts use 
 | Command | Purpose |
 | --- | --- |
 | `npm test` | Run all Vitest library/component tests once |
+| `npm run test:reader` | Run only non-AI library/component tests; exclude Agent desk tests |
+| `npm run test:reader:desktop` | Build, then run extended non-AI native QA with HTTP/fetch blocked |
 | `npm run test:watch` | Run tests interactively while developing |
 | `npm run build` | Type-check renderer code and generate production assets |
 | `npm run test:desktop` | Build, then exercise the native Electron application with private fixtures/profile |
@@ -114,6 +117,10 @@ npm run test:desktop
 ```
 
 The script uses Playwright's Electron support against the local Electron runtime; a separate Playwright Chromium download is not required. It creates its own files/profile, replaces native file dialogs with fixture paths, and exercises real renderer/main-process integration. It tests navigation, embeds with references/footnotes, math/diagrams, annotations, HTML/PDF files, folds, images, slides, history, Live editing/undo, missing-note creation/completion, graph interaction, theme/layout, immediate-close position persistence, restart persistence, storage-failure close cancellation, and blocked background networking.
+
+For a broader reader-only failure/regression pass, use `npm run test:reader:desktop`. The additional runner verifies Unicode/BOM/CRLF round trips, wrap and undo, first-use/quoted checkbox editing, visible-text search across inline formatting, protected Save As/export targets, concurrent and failed atomic writes, rejected binary/oversized inputs, unsaved-buffer search, keyboard palettes, image-byte validation, malformed diagrams/XSS, large-file Live fallback, autosave/external conflicts, renderer recovery, typing during close-and-save, minimum-size layouts, and preference-quota failures. It blocks Node HTTP/HTTPS/fetch, checks for unexpected renderer requests/errors, and never configures or connects to Ollama. Native dialogs are substituted with deterministic choices, so this is not manual validation of platform dialog appearance or Finder file associations. See the [QA report](QA_REPORT.md).
+
+Both runners accept `MARGIN_SMOKE_EXECUTABLE` to test a freshly packaged executable. Run them sequentially to keep memory use bounded. They deliberately inject failures only in their disposable test process/profile and never use your ordinary app profile. Screenshots disable animations so transient fades do not look like layout defects.
 
 It prints an artifact directory with screenshots and exports. These fixtures are intentionally temporary and distinct from your normal app profile. The script tests normal quit/restart in its persistence flow; final forced exit is private test teardown, not the recommended user shutdown workflow.
 

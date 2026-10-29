@@ -50,4 +50,24 @@ describe('reader find', () => {
     expect(highlightReaderFind(container, 'copy')).toHaveLength(1)
     expect(container.querySelector('button mark')).toBeNull()
   })
+
+  it('excludes folded sections, closed callout bodies, and non-document controls', () => {
+    const container = document.createElement('article')
+    container.innerHTML = '<p>Visible needle</p><p hidden>Folded needle</p><details><summary>Needle title</summary><p>Hidden needle</p></details><button data-margin-fold>Needle</button>'
+    expect(highlightReaderFind(container, 'needle')).toHaveLength(2)
+    expect(container.querySelector('[hidden] mark')).toBeNull()
+    expect(container.querySelector('details p mark')).toBeNull()
+  })
+
+  it('finds one phrase across inline formatting and preserves that formatting when cleared', () => {
+    const container = document.createElement('article')
+    const original = '<p>Read <strong>deeply</strong> today. Read <em>deeply</em> again.</p>'
+    container.innerHTML = original
+    const matches = highlightReaderFind(container, 'Read deeply')
+    expect(matches).toHaveLength(2)
+    expect(activateReaderFindMatch(matches, 1)).toBe(1)
+    expect(container.querySelectorAll('mark.is-current')).toHaveLength(2)
+    clearReaderFind(container)
+    expect(container.innerHTML).toBe(original)
+  })
 })
